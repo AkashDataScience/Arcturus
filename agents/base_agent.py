@@ -227,6 +227,43 @@ class AgentRunner:
             tool_prompt = f"{tools_text}"
             user_prompt = f"\n\n```json\n{json.dumps(input_data, indent=2, default=str)}\n```"
 
+            # === Safety: Inject Canary Token into System Prompt ===
+            # Generate a unique canary token for this agent invocation to detect prompt leakage
+            try:
+                from safety.canary import generate_canary
+                canary_token = generate_canary()
+                # Inject as hidden instruction that should never appear in output
+                system_prompt += f"\n\n[INTERNAL_TOKEN: {canary_token}]"
+                # Store canary token in input_data for later leak detection
+                if not isinstance(input_data, dict):
+                    input_data = {}
+                if "_canary_tokens" not in input_data:
+                    input_data["_canary_tokens"] = []
+                input_data["_canary_tokens"].append(canary_token)
+            except Exception as e:
+                log_error(f"Failed to inject canary token: {e}")
+
+            # === Safety: Instruction Hierarchy Enforcement ===
+            try:
+                from safety.instruction_hierarchy import enforce_hierarchy
+                system_prompt, tool_prompt, user_prompt, hierarchy_validation = enforce_hierarchy(
+                    system_prompt, tool_prompt, user_prompt, strict_mode=False
+                )
+                if not hierarchy_validation["valid"]:
+                    log_error(f"Instruction hierarchy violations detected: {hierarchy_validation['violations']}")
+                    # Log safety event for violations
+                    try:
+                        from safety.audit import log_safety_event
+                        log_safety_event(
+                            "instruction_hierarchy_violation",
+                            context={"agent_type": agent_type, "violations": hierarchy_validation["violations"]},
+                            metadata={"action": hierarchy_validation.get("action", "sanitize")}
+                        )
+                    except Exception:
+                        pass
+            except Exception as e:
+                log_error(f"Instruction hierarchy enforcement failed: {e}")
+
             # HIERARCHY ENFORCEMENT
             # This is a simplified way to represent the hierarchy for the model.
             # In a more advanced system, this might involve different API calls or message roles.

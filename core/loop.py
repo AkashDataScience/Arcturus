@@ -193,6 +193,32 @@ class AgentLoop4:
             scan_result = scan_input(query, {"session_id": session_id, "file_manifest": file_manifest})
             if not scan_result.get("allowed", True):
                 reason = scan_result.get("reason", "blocked by safety")
+                
+                # === Safety: Threat Tracking ===
+                try:
+                    from safety.threat_tracker import get_threat_tracker
+                    threat_tracker = get_threat_tracker()
+                    threat_assessment = threat_tracker.record_attempt(
+                        session_id or "unknown",
+                        reason,
+                        user_id=None  # TODO: Extract from context if available
+                    )
+                    
+                    # If threat level requires blocking, enforce it
+                    if threat_assessment["action"] == "block":
+                        self.context.mark_failed("Query", f"blocked_by_threat_tracker:{reason}")
+                        log_step(f"Blocked by threat tracker: {threat_assessment.get('message', reason)}", symbol="⛔")
+                        log_safety_event(
+                            "threat_tracker_block",
+                            context={"session_id": session_id, "query": query},
+                            metadata={"threat_assessment": threat_assessment, "reason": reason}
+                        )
+                        return self.context
+                    elif threat_assessment["action"] == "rate_limit":
+                        log_step(f"Rate limiting due to threat level: {threat_assessment['attempt_count']} attempts", symbol="⚠️")
+                except Exception as e:
+                    log_error(f"Threat tracking failed: {e}")
+                
                 self.context.mark_failed("Query", reason)
                 log_step(f"Blocked input by safety: {scan_result.get('reason')}", symbol="⛔")
                 # Audit the block event
@@ -764,6 +790,61 @@ class AgentLoop4:
             
             output = result["output"]
             
+            # === Safety: Comprehensive Output Scanning ===
+            try:
+                from safety.output_scanner import validate_output_safety
+                
+                # Get canary tokens from context and input_data
+                session_context = context.plan_graph.graph
+                input_data_for_scan = current_input if isinstance(current_input, dict) else {}
+                
+                output_validation = validate_output_safety(
+                    output,
+                    session_context=session_context,
+                    input_data=input_data_for_scan,
+                    strict_mode=True
+                )
+                
+                if not output_validation.get("allowed", True):
+                    # Critical issue detected (canary leak, prompt leakage)
+                    reason = output_validation.get("reason", "output_validation_failed")
+                    log_safety_event(
+                        "output_blocked",
+                        context={
+                            "session_id": context.plan_graph.graph.get("session_id"),
+                            "step_id": step_id,
+                            "agent": agent_type
+                        },
+                        metadata={
+                            "reason": reason,
+                            "hits": output_validation.get("hits", [])
+                        }
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Output blocked by safety: {reason}"
+                    }
+                elif output_validation.get("action") == "redact":
+                    # Redaction needed
+                    log_safety_event(
+                        "output_redacted",
+                        context={
+                            "session_id": context.plan_graph.graph.get("session_id"),
+                            "step_id": step_id,
+                            "agent": agent_type
+                        },
+                        metadata={
+                            "reason": output_validation.get("reason"),
+                            "hits": output_validation.get("hits", [])
+                        }
+                    )
+                    if "sanitized_output" in output_validation:
+                        output = output_validation["sanitized_output"]
+                    elif "redacted_output" in output_validation:
+                        output = output_validation["redacted_output"]
+            except Exception as e:
+                log_error(f"Aegis: output scanner error: {e}")
+            
             # Output policy evaluation (PII, content policy, abstain/block) ===
             try:
                 pe = PolicyEngine()
@@ -833,13 +914,15 @@ class AgentLoop4:
 
                     tool_args = sanitize_tool_args(tool_args)
                     session_key = context.plan_graph.graph.get("session_id")
+                    user_key = session_key or agent_type
                     
-                    if not _RATE_LIMITER.allow(session_key or agent_type):
+                    # Use operation-specific rate limiting for tool calls
+                    if not _RATE_LIMITER.allow(user_key, operation_type="tool_call"):
                         log_step("Rate limit exceeded for tool calls", symbol="⛔")
                         log_safety_event(
                             "rate_limit_exceeded",
                             context={"session_id": session_key, "step_id": step_id, "tool_name": tool_name},
-                            metadata={"agent": agent_type}
+                            metadata={"agent": agent_type, "operation_type": "tool_call"}
                         )
                         result_str = "Rate limit exceeded"
                         iterations_data[-1]["tool_result"] = result_str
