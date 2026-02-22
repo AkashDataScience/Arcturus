@@ -180,6 +180,7 @@ class SlideThemeColors(BaseModel):
     background: str
     text: str
     text_light: str
+    title_background: Optional[str] = None
 
 
 class SlideTheme(BaseModel):

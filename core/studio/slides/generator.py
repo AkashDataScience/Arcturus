@@ -5,6 +5,16 @@ import random
 
 from core.studio.slides.types import NARRATIVE_ARC, SLIDE_TYPE_ELEMENTS
 
+# Varied filler templates: (title, body, slide_type)
+_FILLER_TEMPLATES = [
+    ("Key Takeaways", "Summarize the core insights from this section.", "content"),
+    ("Additional Context", "Background information that supports the main argument.", "two_column"),
+    ("Next Steps", "Outline the recommended actions moving forward.", "content"),
+    ("Supporting Evidence", "Data and references that reinforce key claims.", "content"),
+    ("Deep Dive", "Detailed exploration of a critical subtopic.", "content"),
+    ("Lessons Learned", "Practical wisdom gained from experience.", "two_column"),
+]
+
 MIN_SLIDES = 8
 MAX_SLIDES = 15
 DEFAULT_SLIDES = 10
@@ -70,6 +80,8 @@ def plan_slide_sequence(
             insert_pos = rng.randint(2, len(sequence) - 2)
             sequence.insert(insert_pos, rng.choice(body_types))
 
+    sequence = _prevent_consecutive_types(sequence, rng)
+
     result = []
     for i, slide_type in enumerate(sequence):
         if i == 0:
@@ -85,6 +97,17 @@ def plan_slide_sequence(
             "position": position,
         })
 
+    return result
+
+
+def _prevent_consecutive_types(sequence: list[str], rng: random.Random) -> list[str]:
+    """Swap consecutive same-type body slides to ensure layout variety."""
+    swap_pool = ["content", "two_column", "stat", "comparison", "image_text"]
+    result = list(sequence)
+    for i in range(1, len(result) - 1):  # skip opening/closing
+        if result[i] == result[i - 1] and result[i] not in ("title",):
+            alternatives = [t for t in swap_pool if t != result[i]]
+            result[i] = rng.choice(alternatives)
     return result
 
 
@@ -121,12 +144,13 @@ def enforce_slide_count(
             padded = [opening]
             filler_count = MIN_SLIDES - 1
             for i in range(filler_count):
+                tmpl = _FILLER_TEMPLATES[i % len(_FILLER_TEMPLATES)]
                 filler = Slide(
                     id=f"filler-{i+1}",
-                    slide_type="content",
-                    title=f"Section {len(padded) + 1}",
+                    slide_type=tmpl[2],
+                    title=tmpl[0],
                     elements=[
-                        SlideElement(id=f"filler-e-{i+1}", type="body", content="Content to be developed."),
+                        SlideElement(id=f"filler-e-{i+1}", type="body", content=tmpl[1]),
                     ],
                     speaker_notes="Expand on this section with relevant details.",
                 )
@@ -137,12 +161,13 @@ def enforce_slide_count(
             body = slides[:-1]
             filler_count = MIN_SLIDES - len(slides)
             for i in range(filler_count):
+                tmpl = _FILLER_TEMPLATES[i % len(_FILLER_TEMPLATES)]
                 filler = Slide(
                     id=f"filler-{i+1}",
-                    slide_type="content",
-                    title=f"Section {len(body) + 1}",
+                    slide_type=tmpl[2],
+                    title=tmpl[0],
                     elements=[
-                        SlideElement(id=f"filler-e-{i+1}", type="body", content="Content to be developed."),
+                        SlideElement(id=f"filler-e-{i+1}", type="body", content=tmpl[1]),
                     ],
                     speaker_notes="Expand on this section with relevant details.",
                 )

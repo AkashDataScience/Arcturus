@@ -1,6 +1,6 @@
 """Slide type and element type constants for the Forge slides pipeline."""
 
-# 10 supported slide types
+# 11 supported slide types
 SLIDE_TYPES = {
     "title",
     "content",
@@ -12,9 +12,10 @@ SLIDE_TYPES = {
     "quote",
     "code",
     "team",
+    "stat",
 }
 
-# 8 supported element types
+# 9 supported element types
 ELEMENT_TYPES = {
     "title",
     "subtitle",
@@ -24,6 +25,7 @@ ELEMENT_TYPES = {
     "chart",
     "code",
     "quote",
+    "stat_callout",
 }
 
 # Slide-type-to-element mapping
@@ -38,19 +40,20 @@ SLIDE_TYPE_ELEMENTS = {
     "quote":       ["quote", "body"],
     "code":        ["title", "code", "body"],
     "team":        ["title", "body", "bullet_list"],
+    "stat":        ["title", "stat_callout", "body"],
 }
 
-# Narrative arc pattern for planning slide sequences
+# Narrative arc pattern — varied with no consecutive repeats
 NARRATIVE_ARC = [
     "title",
     "content",
-    "content",
+    "stat",
     "two_column",
     "timeline",
+    "image_text",
     "chart",
     "quote",
     "content",
-    "team",
     "title",
 ]
 

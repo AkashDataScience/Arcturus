@@ -1,7 +1,18 @@
 """Open-validation for exported PPTX files — v2 with quality checks."""
 
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+# Placeholder text patterns that indicate incomplete content
+_PLACEHOLDER_PATTERNS = [
+    re.compile(r"content to be developed", re.IGNORECASE),
+    re.compile(r"to be added", re.IGNORECASE),
+    re.compile(r"\bplaceholder\b", re.IGNORECASE),
+    re.compile(r"lorem ipsum", re.IGNORECASE),
+    re.compile(r"\btbd\b", re.IGNORECASE),
+    re.compile(r"insert .* here", re.IGNORECASE),
+]
 
 
 def validate_pptx(
@@ -151,7 +162,7 @@ def validate_pptx(
         except Exception:
             pass
 
-    # === Layer 5: Content heuristics (advisory) ===
+    # === Layer 5: Content heuristics (advisory + blocking placeholder check) ===
     if content_tree is not None:
         try:
             ct_slides = content_tree.slides if hasattr(content_tree, 'slides') else []
@@ -168,6 +179,27 @@ def validate_pptx(
                         layout_warnings.append(
                             f"Slide {slide_idx + 1}: bullet list has {len(el.content)} items"
                         )
+
+                # Placeholder text detection (blocking)
+                for el in ct_slide.elements:
+                    texts = []
+                    if isinstance(el.content, str):
+                        texts.append(el.content)
+                    elif isinstance(el.content, list):
+                        for item in el.content:
+                            if isinstance(item, dict):
+                                texts.extend(str(v) for v in item.values())
+                            else:
+                                texts.append(str(item))
+                    elif isinstance(el.content, dict):
+                        texts.extend(str(v) for v in el.content.values())
+                    for txt in texts:
+                        for pat in _PLACEHOLDER_PATTERNS:
+                            if pat.search(txt):
+                                layout_errors.append(
+                                    f"Slide {slide_idx + 1}: placeholder text detected: '{pat.pattern}'"
+                                )
+                                break
 
                 # Sparse content check (non-title slides)
                 if ct_slide.slide_type != "title":

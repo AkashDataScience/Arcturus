@@ -84,10 +84,13 @@ def _get_type_specific_outline_guidance(artifact_type: ArtifactType) -> str:
   * comparison — Explicit pros/cons or before/after layout
   * timeline — Sequential steps, milestones, or roadmap
   * chart — Data visualization with supporting context
+  * stat — Key metrics displayed as large callouts (1-3 per slide)
   * image_text — Split layout with image area and descriptive text
   * quote — Featured quotation with attribution
   * code — Technical slide with monospace code block
   * team — Team members, credits, or acknowledgments
+- When the topic involves data, metrics, or KPIs, prefer stat or chart slide types
+- Bullet points should be SHORT phrases (6-8 words max), not full sentences
 - Assign a slide_type to each item in the description field (e.g., "slide_type: two_column")"""
 
     elif artifact_type == ArtifactType.document:
@@ -120,10 +123,10 @@ def _get_type_specific_draft_schema(artifact_type: ArtifactType) -> str:
   "slides": [
     {
       "id": "s1",
-      "slide_type": "title|content|two_column|comparison|timeline|chart|image_text|quote|code|team",
+      "slide_type": "title|content|two_column|comparison|timeline|chart|stat|image_text|quote|code|team",
       "title": "Slide title",
       "elements": [
-        {"id": "e1", "type": "title|subtitle|body|bullet_list|image|chart|code|quote", "content": "..."}
+        {"id": "e1", "type": "title|subtitle|body|bullet_list|image|chart|code|quote|stat_callout", "content": "..."}
       ],
       "speaker_notes": "Notes for the presenter"
     }
@@ -151,6 +154,17 @@ For elements with type="chart", content MUST be a structured JSON object:
 }
 For scatter charts, use "points": [{"x": 1.0, "y": 2.0}, ...] instead of categories/series.
 Do NOT use plain text strings for chart content — always use structured JSON.
+
+For elements with type="stat_callout", content MUST be a JSON array of stat objects:
+[{"value": "85%", "label": "Customer Satisfaction"}, {"value": "2.4M", "label": "Active Users"}]
+Include 1-3 stat objects per slide. Values should be punchy numbers/percentages.
+
+SLIDE CONTENT DENSITY RULES (mandatory):
+- MAX 6 bullets per slide, MAX 8 words per bullet
+- MAX 3 short sentences per body element (25 words max per sentence)
+- Move detailed explanations to speaker notes; keep only key phrases on the slide
+- NEVER use placeholder text like "Content to be developed", "TBD", "Lorem ipsum", or "To be added"
+- Every slide must have substantive, specific content — no filler
 
 SPEAKER NOTES REQUIREMENTS (mandatory for every slide):
 - Write 2-4 concise sentences of presenter guidance per slide

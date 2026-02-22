@@ -16,12 +16,12 @@ def _register(theme: SlideTheme) -> None:
 
 _FONT_PAIRS = [
     ("Calibri", "Calibri Light"),
-    ("Arial", "Arial"),
+    ("Georgia", "Arial"),
     ("Georgia", "Verdana"),
     ("Cambria", "Corbel"),
     ("Garamond", "Trebuchet MS"),
     ("Constantia", "Candara"),
-    ("Century Gothic", "Century Gothic"),
+    ("Century Gothic", "Calibri Light"),
     ("Book Antiqua", "Tahoma"),
 ]
 
@@ -37,6 +37,7 @@ _register(SlideTheme(
         background="#FFFFFF",
         text="#1B365D",
         text_light="#6B7B8D",
+        title_background="#1B365D",
     ),
     font_heading="Calibri",
     font_body="Calibri Light",
@@ -53,6 +54,7 @@ _register(SlideTheme(
         background="#F7F7F7",
         text="#1A1A2E",
         text_light="#6C757D",
+        title_background="#004E64",
     ),
     font_heading="Montserrat",
     font_body="Open Sans",
@@ -69,6 +71,7 @@ _register(SlideTheme(
         background="#FAFAFA",
         text="#212121",
         text_light="#9E9E9E",
+        title_background="#2D2D2D",
     ),
     font_heading="Helvetica",
     font_body="Helvetica Light",
@@ -85,6 +88,7 @@ _register(SlideTheme(
         background="#F1F8E9",
         text="#1B5E20",
         text_light="#689F38",
+        title_background="#2E7D32",
     ),
     font_heading="Georgia",
     font_body="Lato",
@@ -101,6 +105,7 @@ _register(SlideTheme(
         background="#121212",
         text="#E0E0E0",
         text_light="#9E9E9E",
+        title_background="#0A0A0A",
     ),
     font_heading="Roboto",
     font_body="Roboto Light",
@@ -117,6 +122,7 @@ _register(SlideTheme(
         background="#FFF8F0",
         text="#3E2723",
         text_light="#8D6E63",
+        title_background="#5C2A1A",
     ),
     font_heading="Playfair Display",
     font_body="Source Sans Pro",
@@ -133,6 +139,7 @@ _register(SlideTheme(
         background="#E3F2FD",
         text="#01579B",
         text_light="#4FC3F7",
+        title_background="#006994",
     ),
     font_heading="Poppins",
     font_body="Nunito",
@@ -149,6 +156,7 @@ _register(SlideTheme(
         background="#FFFFFF",
         text="#212121",
         text_light="#757575",
+        title_background="#1A1A1A",
     ),
     font_heading="Arial",
     font_body="Arial",
@@ -167,6 +175,7 @@ _register(SlideTheme(
         background="#FFFFFF",
         text="#0A1F44",
         text_light="#6B7B8D",
+        title_background="#0A1F44",
     ),
     font_heading="Garamond",
     font_body="Trebuchet MS",
@@ -183,6 +192,7 @@ _register(SlideTheme(
         background="#FFFFFF",
         text="#004D5A",
         text_light="#78909C",
+        title_background="#007C91",
     ),
     font_heading="Corbel",
     font_body="Corbel",
@@ -199,6 +209,7 @@ _register(SlideTheme(
         background="#F5F0FA",
         text="#311B60",
         text_light="#7E57C2",
+        title_background="#5C2D91",
     ),
     font_heading="Constantia",
     font_body="Candara",
@@ -215,6 +226,7 @@ _register(SlideTheme(
         background="#FAFAFA",
         text="#212121",
         text_light="#9E9E9E",
+        title_background="#2A2A2A",
     ),
     font_heading="Garamond",
     font_body="Trebuchet MS",
@@ -231,6 +243,7 @@ _register(SlideTheme(
         background="#FFF3F0",
         text="#3E2723",
         text_light="#8D6E63",
+        title_background="#8B2500",
     ),
     font_heading="Century Gothic",
     font_body="Century Gothic",
@@ -247,6 +260,7 @@ _register(SlideTheme(
         background="#FFFAF5",
         text="#3E1520",
         text_light="#8D6E63",
+        title_background="#6B2737",
     ),
     font_heading="Book Antiqua",
     font_body="Tahoma",
@@ -263,6 +277,7 @@ _register(SlideTheme(
         background="#F5F5FF",
         text="#1A237E",
         text_light="#7986CB",
+        title_background="#3F51B5",
     ),
     font_heading="Calibri",
     font_body="Calibri Light",
@@ -279,6 +294,7 @@ _register(SlideTheme(
         background="#FFFDE7",
         text="#E65100",
         text_light="#FF8F00",
+        title_background="#BF360C",
     ),
     font_heading="Trebuchet MS",
     font_body="Verdana",
@@ -410,6 +426,11 @@ def generate_theme_variant(base_id: str, variant_seed: int) -> SlideTheme:
     # Background style
     bg_style = _BACKGROUND_STYLES[(variant_seed - 1) % len(_BACKGROUND_STYLES)]
 
+    # Carry over and hue-rotate title_background if present
+    new_title_bg = None
+    if base.colors.title_background:
+        new_title_bg = _hue_rotate(base.colors.title_background, offset)
+
     nn = f"{variant_seed:02d}"
     return SlideTheme(
         id=f"{base_id}--v{nn}",
@@ -421,6 +442,7 @@ def generate_theme_variant(base_id: str, variant_seed: int) -> SlideTheme:
             background=new_background,
             text=new_text,
             text_light=new_text_light,
+            title_background=new_title_bg,
         ),
         font_heading=font_pair[0],
         font_body=font_pair[1],
