@@ -168,6 +168,10 @@ MUST include focus-specific constraints in their `agent_prompt`.
 - Instruct RetrieverAgent: "Use search_workspace_files and search_past_conversations instead of web search. Prioritize local project context and user memory over internet results. Use analyze_pdf_document or analyze_data_file if specific local files are mentioned."
 - Citation format: Local file path or Memory ID
 
+### focus_mode: "internal"
+- Instruct RetrieverAgent: "Use search_workspace_files and search_past_conversations instead of web search. Prioritize local project context and user memory over internet results. Use analyze_pdf_document or analyze_data_file if specific local files are mentioned."
+- Citation format: Local file path or Memory ID
+
 ### focus_mode: "general" (or absent)
 - No special constraints. Use default search behavior.
 - **Agent rule**: Use RetrieverAgent for all web searches. CoderAgent only for computation tasks.
