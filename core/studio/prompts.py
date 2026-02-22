@@ -164,7 +164,7 @@ Include 1-3 stat objects per slide. Values should be punchy numbers/percentages.
 SLIDE CONTENT DENSITY RULES (mandatory):
 - MAX 6 bullets per slide, MAX 8 words per bullet
 - MAX 3 short sentences per body element (25 words max per sentence)
-- Move detailed explanations to speaker notes; keep only key phrases on the slide
+- The slide should contain MAX 30% of the information (key phrases only). The other 70% belongs in speaker_notes
 - NEVER use placeholder text like "Content to be developed", "TBD", "Lorem ipsum", or "To be added"
 - Every slide must have substantive, specific content — no filler
 
@@ -244,9 +244,9 @@ def get_draft_prompt_with_sequence(
     base_prompt = get_draft_prompt(artifact_type, outline)
 
     if slide_sequence and artifact_type == ArtifactType.slides:
-        sequence_hint = "\n\nPlanned slide sequence (follow this structure):\n"
+        sequence_hint = "\n\nPlanned slide sequence — You MUST use the exact slide_type specified for each position. Do NOT substitute content or image_text for the assigned type:\n"
         for i, s in enumerate(slide_sequence, 1):
-            sequence_hint += f"  Slide {i}: type={s['slide_type']}, position={s['position']}\n"
+            sequence_hint += f"  Slide {i}: slide_type={s['slide_type']} (MANDATORY), position={s['position']}\n"
         base_prompt += sequence_hint
 
     return base_prompt
