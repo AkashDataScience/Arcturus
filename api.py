@@ -92,6 +92,8 @@ async def lifespan(app: FastAPI):
     yield
     
     print("🛑 API Shutting down...")
+    from ops.tracing import shutdown_tracing
+    shutdown_tracing()
     from shared.state import get_canvas_runtime
     get_canvas_runtime().save_snapshots()
     persistence_manager.save_snapshot()

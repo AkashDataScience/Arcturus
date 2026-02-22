@@ -23,9 +23,10 @@ class MongoDBSpanExporter(SpanExporter):
         self._ensure_indexes()
 
     def _ensure_indexes(self):
-        """Create indexes for trace_id, run_id, and time-range queries."""
+        """Create indexes for trace_id, run_id, session_id, and time-range queries."""
         self.collection.create_index("trace_id")
         self.collection.create_index("attributes.run_id")
+        self.collection.create_index("attributes.session_id")
         self.collection.create_index([("start_time", -1)])
 
     def export(self, spans: list[ReadableSpan]) -> SpanExportResult:
@@ -62,13 +63,28 @@ def init_tracing(mongodb_uri: str, jaeger_endpoint: str | None = None, service_n
     """
     resource = Resource.create({"service.name": service_name})
     provider = TracerProvider(resource=resource)
-    provider.add_span_processor(BatchSpanProcessor(MongoDBSpanExporter(mongodb_uri)))
+    # schedule_delay_millis=2000 for faster Jaeger visibility (default 5000)
+    batch_opts = {"schedule_delay_millis": 2000}
+    provider.add_span_processor(BatchSpanProcessor(MongoDBSpanExporter(mongodb_uri), **batch_opts))
     if jaeger_endpoint:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=jaeger_endpoint)))
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=jaeger_endpoint), **batch_opts))
     trace.set_tracer_provider(provider)
 
 
 def get_tracer(name: str):
     """Return a tracer for the given module/component. Use this when creating spans."""
     return trace.get_tracer(name, "1.0.0")
+
+
+def shutdown_tracing(timeout_millis: int = 5000) -> None:
+    """
+    Flush pending spans to exporters before process exit.
+    Call during API shutdown to avoid losing traces (e.g. when Electron closes).
+    """
+    try:
+        provider = trace.get_tracer_provider()
+        if hasattr(provider, "force_flush"):
+            provider.force_flush(timeout_millis=timeout_millis)
+    except Exception:
+        pass  # Do not block shutdown on flush failure

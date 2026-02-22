@@ -56,7 +56,9 @@ class AgentRunner:
         if not config:
             raise ValueError(f"Unknown agent type: {agent_type} (Not found in Registry)")
 
-        span_ctx = {"agent": agent_type, "node_id": input_data.get("step_id", "Query")}
+        session_ctx = input_data.get("session_context") or {}
+        session_id = session_ctx.get("session_id", "")
+        span_ctx = {"agent": agent_type, "node_id": input_data.get("step_id", "Query"), "session_id": session_id}
         with set_span_context(span_ctx):
             try:
                 # 1. Load prompt template

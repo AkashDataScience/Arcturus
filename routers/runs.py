@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Body
 from pydantic import BaseModel
 from typing import Optional
 
-from ops.tracing import run_span
+from ops.tracing import run_span, agent_execute_node_span
 from opentelemetry.trace import Status, StatusCode
 
 from shared.state import (
@@ -67,23 +67,26 @@ class ExecuteNodeRequest(BaseModel):
 # === Background Tasks ===
 
 async def process_resume(run_id: str, session_path: Path):
-    """Background task to resume agent loop from a file"""
-    try:
-        loop = AgentLoop4(multi_mcp=multi_mcp)
-        # Register the LOOP instance immediately so we can stop it
-        active_loops[run_id] = loop
-        
-        print(f"[{run_id}] Resuming run from {session_path}")
-        await loop.resume(str(session_path))
-        
-    except Exception as e:
-        print(f"Run {run_id} resume failed: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        # Clean up
-        if run_id in active_loops:
-            del active_loops[run_id]
+    """Background task to resume agent loop from a file.
+    WATCHTOWER: Wraps with run_span so resume runs appear in Jaeger with run_id.
+    """
+    from ops.tracing import run_span
+    with run_span(run_id, "resume"):
+        try:
+            loop = AgentLoop4(multi_mcp=multi_mcp)
+            # Register the LOOP instance immediately so we can stop it
+            active_loops[run_id] = loop
+
+            print(f"[{run_id}] Resuming run from {session_path}")
+            await loop.resume(str(session_path))
+        except Exception as e:
+            print(f"Run {run_id} resume failed: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # Clean up
+            if run_id in active_loops:
+                del active_loops[run_id]
 
 
 async def process_run(run_id: str, query: str):
@@ -124,6 +127,12 @@ async def process_run(run_id: str, query: str):
                 span.set_status(Status(StatusCode.ERROR, "cancelled"))
                 print(f"[{run_id}] Run cancelled.")
                 context = loop.context  # Recovery context from loop if possible
+
+            # Mark span as error if run completed with failure status (max iterations, cost exceeded, etc.)
+            if context and getattr(context, "plan_graph", None):
+                status = context.plan_graph.graph.get("status")
+                if status in ("failed", "cost_exceeded"):
+                    span.set_status(Status(StatusCode.ERROR, context.plan_graph.graph.get("error", status)))
 
             # 2. EXTRACT NEW MEMORIES (Remme)
             # We put this in a finally block? No, because we want it only on success/completion of meaningful work.
@@ -577,210 +586,212 @@ async def test_agent(run_id: str, node_id: str, request: AgentTestRequest = Body
     - Returns the NEW output WITHOUT saving to session
     """
     try:
-        # 1. Find the session file
-        summaries_dir = PROJECT_ROOT / "memory" / "session_summaries_index"
-        found_file = None
-        for path in summaries_dir.rglob(f"session_{run_id}.json"):
-            found_file = path
-            break
-        
-        if not found_file:
-            raise HTTPException(status_code=404, detail="Session not found")
-        
-        # 2. Load session data
-        import networkx as nx
-        session_data = json.loads(found_file.read_text())
-        if "edges" in session_data:
-            G = nx.node_link_graph(session_data, edges="edges")
-        elif "links" in session_data:
-            G = nx.node_link_graph(session_data, edges="links")
-        elif "link" in session_data:
-            G = nx.node_link_graph(session_data, edges="link")
-        else:
-            session_data["edges"] = []
-            G = nx.node_link_graph(session_data, edges="edges")
-        
-        # 3. Find the node
-        if node_id not in G.nodes:
-            raise HTTPException(status_code=404, detail=f"Node {node_id} not found in session")
-        
-        node_data = G.nodes[node_id]
-        agent_type = node_data.get("agent")
-        
-        if not agent_type:
-            raise HTTPException(status_code=400, detail="Node has no agent type")
-        
-        # 4. Collect inputs from globals_schema based on 'reads'
-        globals_schema = G.graph.get("globals_schema", {})
-        reads = node_data.get("reads", [])
-        inputs = {key: globals_schema.get(key) for key in reads if key in globals_schema}
-        
-        # 5. Build the input payload helper
-        def build_agent_input(instruction=None, previous_output=None, iteration_context=None):
-            # Determine base values
-            prompt_to_use = instruction or node_data.get("agent_prompt", node_data.get("description", ""))
-            query_to_use = G.graph.get("original_query", "")
+        with run_span(run_id, f"agent_test:{node_id}"):
+            # 1. Find the session file
+            summaries_dir = PROJECT_ROOT / "memory" / "session_summaries_index"
+            found_file = None
+            for path in summaries_dir.rglob(f"session_{run_id}.json"):
+                found_file = path
+                break
 
-            # Apply overrides from request if present
-            if request and request.input:
-                if agent_type == "PlannerAgent":
-                    query_to_use = request.input
-                else:
-                    # For downstream agents, the input overrides the instruction/goal
-                    prompt_to_use = request.input
+            if not found_file:
+                raise HTTPException(status_code=404, detail="Session not found")
 
-            payload = {
-                "step_id": node_id,
-                "agent_prompt": prompt_to_use,
-                "reads": reads,
-                "writes": node_data.get("writes", []),
-                "inputs": inputs,
-                "original_query": query_to_use,
-                "session_context": {
-                    "session_id": run_id,
-                    "created_at": G.graph.get("created_at", ""),
-                    "file_manifest": G.graph.get("file_manifest", []),
-                },
-                **({"previous_output": previous_output} if previous_output else {}),
-                **({"iteration_context": iteration_context} if iteration_context else {})
-            }
-             # Formatter-specific additions
-            if agent_type == "FormatterAgent":
-                global_data = G.graph.get('globals_schema', {}).copy()
-                print(f"🕵️‍♂️ DEBUG FORMATTER: run_id={run_id}")
-                print(f"🕵️‍♂️ DEBUG FORMATTER: file={found_file}")
-                print(f"🕵️‍♂️ DEBUG FORMATTER: globals_keys={list(global_data.keys())}")
-                if 'formatted_report_T010' in global_data:
-                    print(f"🕵️‍♂️ DEBUG FORMATTER: FOUND STALE KEY 'formatted_report_T010'!")
-                payload["all_globals_schema"] = global_data
-            return payload
-
-        # 6. Execute with ReAct Loop (Max 15 turns)
-        from agents.base_agent import AgentRunner
-        from memory.context import ExecutionContextManager
-        
-        agent_runner = AgentRunner(multi_mcp)
-        temp_context = ExecutionContextManager.__new__(ExecutionContextManager)
-        temp_context.plan_graph = G
-        temp_context.multi_mcp = multi_mcp
-
-        max_turns = 15
-        current_input = build_agent_input()
-        iterations_data = []
-        final_output = {}
-        final_execution_result = None
-
-        for turn in range(1, max_turns + 1):
-            print(f"🔄 Test Mode: {agent_type} Iteration {turn}/{max_turns}")
-            
-            # Run Agent
-            result = await agent_runner.run_agent(agent_type, current_input)
-            
-            if not result["success"]:
-                return {
-                    "status": "error",
-                    "error": result.get("error", "Agent execution failed"),
-                    "node_id": node_id,
-                    "agent_type": agent_type
-                }
-            
-            output = result["output"]
-            final_output = output # Update final output
-            iterations_data.append({"iteration": turn, "output": output})
-            
-            # 1. Check for 'call_tool' (ReAct)
-            if output.get("call_tool"):
-                tool_call = output["call_tool"]
-                tool_name = tool_call.get("name")
-                tool_args = tool_call.get("arguments", {})
-                
-                print(f"🛠️ Test Mode: Executing Tool: {tool_name}")
-                
-                try:
-                    # Execute tool via MultiMCP
-                    tool_result = await multi_mcp.route_tool_call(tool_name, tool_args)
-                    
-                    # Serialize result content
-                    if isinstance(tool_result.content, list):
-                        result_str = "\n".join([str(item.text) for item in tool_result.content if hasattr(item, "text")])
-                    else:
-                        result_str = str(tool_result.content)
-
-                    # Save result to history
-                    iterations_data[-1]["tool_result"] = result_str
-                    
-                    # Prepare input for next iteration
-                    instruction = output.get("thought", "Use the tool result to generate the final output.")
-                    if turn == max_turns - 1:
-                         instruction += " \n\n⚠️ WARNING: This is your FINAL turn. You MUST provide the final 'output' now. Do not call any more tools. Summarize what you have."
-
-                    current_input = build_agent_input(
-                        instruction=instruction,
-                        previous_output=output,
-                        iteration_context={"tool_result": result_str}
-                    )
-                    continue # Loop to next turn
-
-                except Exception as e:
-                    print(f"Test Mode: Tool Execution Failed: {e}")
-                    current_input = build_agent_input(
-                        instruction="The tool execution failed. Try a different approach or tool.",
-                        previous_output=output,
-                        iteration_context={"tool_result": f"Error: {str(e)}"}
-                    )
-                    continue
-
-            # 2. Check for call_self (Legacy/Advanced recursion)
-            elif output.get("call_self"):
-                # Handle code execution if needed
-                if temp_context._has_executable_code(output):
-                     # Pass 'inputs' as overrides so variables from prev iterations (like ipl_urls_1A) are available
-                    execution_result = await temp_context._auto_execute_code(node_id, output, input_overrides=inputs)
-                    final_execution_result = execution_result
-                    
-                    # Save result to history
-                    iterations_data[-1]["execution_result"] = execution_result
-
-                    if execution_result.get("status") == "success":
-                        execution_data = execution_result.get("result", {})
-                        inputs = {**inputs, **execution_data}  # Update inputs for next iteration
-                
-                # Prepare input for next iteration
-                current_input = build_agent_input(
-                    instruction=output.get("next_instruction", "Continue the task"),
-                    previous_output=output,
-                    iteration_context=output.get("iteration_context", {})
-                )
-                continue
-
-            # 3. Success (No tool call, just output)
+            # 2. Load session data
+            import networkx as nx
+            session_data = json.loads(found_file.read_text())
+            if "edges" in session_data:
+                G = nx.node_link_graph(session_data, edges="edges")
+            elif "links" in session_data:
+                G = nx.node_link_graph(session_data, edges="links")
+            elif "link" in session_data:
+                G = nx.node_link_graph(session_data, edges="link")
             else:
-                 # Execute code if present (Final Iteration)
-                if temp_context._has_executable_code(output):
-                     # Pass 'inputs' as overrides here too
-                    final_execution_result = await temp_context._auto_execute_code(node_id, output, input_overrides=inputs)
-                    iterations_data[-1]["execution_result"] = final_execution_result
-                    if final_execution_result:
-                         final_output = temp_context._merge_execution_results(output, final_execution_result)
-                break # Exit loop
-        
-        # 8. Get the original output for comparison
-        original_output = node_data.get("output", {})
-        
-        # Ensure final_execution_result is passed even if loop broke early
-        if not final_execution_result and iterations_data:
-             final_execution_result = iterations_data[-1].get("execution_result")
+                session_data["edges"] = []
+                G = nx.node_link_graph(session_data, edges="edges")
 
-        return {
-            "status": "success",
-            "node_id": node_id,
-            "agent_type": agent_type,
-            "original_output": original_output,
-            "test_output": final_output,
-            "execution_result": final_execution_result,
-            "inputs_used": inputs,
-            "iterations": iterations_data # Optional: Pass full iterations if needed by UI
-        }
+            # 3. Find the node
+            if node_id not in G.nodes:
+                raise HTTPException(status_code=404, detail=f"Node {node_id} not found in session")
+
+            node_data = G.nodes[node_id]
+            agent_type = node_data.get("agent")
+
+            if not agent_type:
+                raise HTTPException(status_code=400, detail="Node has no agent type")
+
+            # 4. Collect inputs from globals_schema based on 'reads'
+            globals_schema = G.graph.get("globals_schema", {})
+            reads = node_data.get("reads", [])
+            inputs = {key: globals_schema.get(key) for key in reads if key in globals_schema}
+
+            # 5. Build the input payload helper
+            def build_agent_input(instruction=None, previous_output=None, iteration_context=None):
+                # Determine base values
+                prompt_to_use = instruction or node_data.get("agent_prompt", node_data.get("description", ""))
+                query_to_use = G.graph.get("original_query", "")
+
+                # Apply overrides from request if present
+                if request and request.input:
+                    if agent_type == "PlannerAgent":
+                        query_to_use = request.input
+                    else:
+                        # For downstream agents, the input overrides the instruction/goal
+                        prompt_to_use = request.input
+
+                payload = {
+                    "step_id": node_id,
+                    "agent_prompt": prompt_to_use,
+                    "reads": reads,
+                    "writes": node_data.get("writes", []),
+                    "inputs": inputs,
+                    "original_query": query_to_use,
+                    "session_context": {
+                        "session_id": run_id,
+                        "created_at": G.graph.get("created_at", ""),
+                        "file_manifest": G.graph.get("file_manifest", []),
+                    },
+                    **({"previous_output": previous_output} if previous_output else {}),
+                    **({"iteration_context": iteration_context} if iteration_context else {})
+                }
+                # Formatter-specific additions
+                if agent_type == "FormatterAgent":
+                    global_data = G.graph.get('globals_schema', {}).copy()
+                    print(f"🕵️‍♂️ DEBUG FORMATTER: run_id={run_id}")
+                    print(f"🕵️‍♂️ DEBUG FORMATTER: file={found_file}")
+                    print(f"🕵️‍♂️ DEBUG FORMATTER: globals_keys={list(global_data.keys())}")
+                    if 'formatted_report_T010' in global_data:
+                        print(f"🕵️‍♂️ DEBUG FORMATTER: FOUND STALE KEY 'formatted_report_T010'!")
+                    payload["all_globals_schema"] = global_data
+                return payload
+
+            # 6. Execute with ReAct Loop (Max 15 turns)
+            from agents.base_agent import AgentRunner
+            from memory.context import ExecutionContextManager
+
+            agent_runner = AgentRunner(multi_mcp)
+            temp_context = ExecutionContextManager.__new__(ExecutionContextManager)
+            temp_context.plan_graph = G
+            temp_context.multi_mcp = multi_mcp
+
+            max_turns = 15
+            current_input = build_agent_input()
+            iterations_data = []
+            final_output = {}
+            final_execution_result = None
+
+            with agent_execute_node_span(node_id, agent_type, run_id):
+                for turn in range(1, max_turns + 1):
+                    print(f"🔄 Test Mode: {agent_type} Iteration {turn}/{max_turns}")
+
+                    # Run Agent
+                    result = await agent_runner.run_agent(agent_type, current_input)
+
+                    if not result["success"]:
+                        return {
+                            "status": "error",
+                            "error": result.get("error", "Agent execution failed"),
+                            "node_id": node_id,
+                            "agent_type": agent_type
+                        }
+
+                    output = result["output"]
+                    final_output = output  # Update final output
+                    iterations_data.append({"iteration": turn, "output": output})
+
+                    # 1. Check for 'call_tool' (ReAct)
+                    if output.get("call_tool"):
+                        tool_call = output["call_tool"]
+                        tool_name = tool_call.get("name")
+                        tool_args = tool_call.get("arguments", {})
+
+                        print(f"🛠️ Test Mode: Executing Tool: {tool_name}")
+
+                        try:
+                            # Execute tool via MultiMCP
+                            tool_result = await multi_mcp.route_tool_call(tool_name, tool_args)
+
+                            # Serialize result content
+                            if isinstance(tool_result.content, list):
+                                result_str = "\n".join([str(item.text) for item in tool_result.content if hasattr(item, "text")])
+                            else:
+                                result_str = str(tool_result.content)
+
+                            # Save result to history
+                            iterations_data[-1]["tool_result"] = result_str
+
+                            # Prepare input for next iteration
+                            instruction = output.get("thought", "Use the tool result to generate the final output.")
+                            if turn == max_turns - 1:
+                                instruction += " \n\n⚠️ WARNING: This is your FINAL turn. You MUST provide the final 'output' now. Do not call any more tools. Summarize what you have."
+
+                            current_input = build_agent_input(
+                                instruction=instruction,
+                                previous_output=output,
+                                iteration_context={"tool_result": result_str}
+                            )
+                            continue  # Loop to next turn
+
+                        except Exception as e:
+                            print(f"Test Mode: Tool Execution Failed: {e}")
+                            current_input = build_agent_input(
+                                instruction="The tool execution failed. Try a different approach or tool.",
+                                previous_output=output,
+                                iteration_context={"tool_result": f"Error: {str(e)}"}
+                            )
+                            continue
+
+                    # 2. Check for call_self (Legacy/Advanced recursion)
+                    elif output.get("call_self"):
+                        # Handle code execution if needed
+                        if temp_context._has_executable_code(output):
+                            # Pass 'inputs' as overrides so variables from prev iterations (like ipl_urls_1A) are available
+                            execution_result = await temp_context._auto_execute_code(node_id, output, input_overrides=inputs)
+                            final_execution_result = execution_result
+
+                            # Save result to history
+                            iterations_data[-1]["execution_result"] = execution_result
+
+                            if execution_result.get("status") == "success":
+                                execution_data = execution_result.get("result", {})
+                                inputs = {**inputs, **execution_data}  # Update inputs for next iteration
+
+                        # Prepare input for next iteration
+                        current_input = build_agent_input(
+                            instruction=output.get("next_instruction", "Continue the task"),
+                            previous_output=output,
+                            iteration_context=output.get("iteration_context", {})
+                        )
+                        continue
+
+                    # 3. Success (No tool call, just output)
+                    else:
+                        # Execute code if present (Final Iteration)
+                        if temp_context._has_executable_code(output):
+                            # Pass 'inputs' as overrides here too
+                            final_execution_result = await temp_context._auto_execute_code(node_id, output, input_overrides=inputs)
+                            iterations_data[-1]["execution_result"] = final_execution_result
+                            if final_execution_result:
+                                final_output = temp_context._merge_execution_results(output, final_execution_result)
+                        break  # Exit loop
+
+            # 8. Get the original output for comparison
+            original_output = node_data.get("output", {})
+
+            # Ensure final_execution_result is passed even if loop broke early
+            if not final_execution_result and iterations_data:
+                final_execution_result = iterations_data[-1].get("execution_result")
+
+            return {
+                "status": "success",
+                "node_id": node_id,
+                "agent_type": agent_type,
+                "original_output": original_output,
+                "test_output": final_output,
+                "execution_result": final_execution_result,
+                "inputs_used": inputs,
+                "iterations": iterations_data  # Optional: Pass full iterations if needed by UI
+            }
         
     except HTTPException:
         raise

@@ -9,6 +9,7 @@ from ops.tracing.core import (
     MongoDBSpanExporter,
     init_tracing,
     get_tracer,
+    shutdown_tracing,
 )
 from ops.tracing.context import (
     set_span_context,
@@ -20,7 +21,10 @@ from ops.tracing.spans import (
     agent_plan_span,
     agent_execute_dag_span,
     agent_execute_node_span,
+    agent_iteration_span,
     llm_span,
+    code_execution_span,
+    sandbox_run_span,
 )
 from ops.tracing.helpers import attach_plan_graph_to_span
 
@@ -28,6 +32,7 @@ __all__ = [
     "MongoDBSpanExporter",
     "init_tracing",
     "get_tracer",
+    "shutdown_tracing",
     "set_span_context",
     "get_span_context",
     "run_span",
@@ -35,6 +40,9 @@ __all__ = [
     "agent_plan_span",
     "agent_execute_dag_span",
     "agent_execute_node_span",
+    "agent_iteration_span",
     "llm_span",
+    "code_execution_span",
+    "sandbox_run_span",
     "attach_plan_graph_to_span",
 ]

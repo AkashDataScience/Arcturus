@@ -48,22 +48,29 @@ def agent_plan_span():
 
 
 @contextmanager
-def agent_execute_dag_span():
+def agent_execute_dag_span(session_id: str = "", resumed: bool = False):
     """
     WATCHTOWER: Span for DAG execution (contains execute_node spans).
     Span name: agent_loop.execute_dag
+    Attributes: session_id, resumed, resumed_at (when resumed) for Jaeger filtering
     """
     tracer = get_tracer("agent_loop")
-    with tracer.start_as_current_span("agent_loop.execute_dag"):
-        yield
+    from datetime import datetime
+    with tracer.start_as_current_span("agent_loop.execute_dag") as span:
+        if session_id:
+            span.set_attribute("session_id", session_id)
+        if resumed:
+            span.set_attribute("resumed", True)
+            span.set_attribute("resumed_at", datetime.utcnow().isoformat() + "Z")
+        yield span
 
 
 @contextmanager
-def agent_execute_node_span(step_id: str, agent_type: str, session_id: str = ""):
+def agent_execute_node_span(step_id: str, agent_type: str, session_id: str = "", retry_attempt: int = 0):
     """
     WATCHTOWER: Span for each agent step (PlannerAgent, CoderAgent, etc.).
     Span name: agent_loop.execute_node
-    Attributes: node_id, agent, session_id
+    Attributes: node_id, agent, session_id, retry_attempt (when > 0)
     """
     tracer = get_tracer("agent_loop")
     node_name = f"{agent_type}_{step_id}"
@@ -71,6 +78,9 @@ def agent_execute_node_span(step_id: str, agent_type: str, session_id: str = "")
         span.set_attribute("node_id", step_id)
         span.set_attribute("agent", agent_type)
         span.set_attribute("session_id", session_id or "")
+        if retry_attempt > 0:
+            span.set_attribute("retry_attempt", retry_attempt)
+            span.set_attribute("is_retry", True)
         yield span
 
 
@@ -91,4 +101,51 @@ def llm_span(model_key: str, model_type: str, prompt_length: int):
             span.set_attribute("agent", ctx["agent"])
         if ctx.get("node_id"):
             span.set_attribute("node_id", ctx["node_id"])
+        if ctx.get("session_id"):
+            span.set_attribute("session_id", ctx["session_id"])
+        yield span
+
+
+@contextmanager
+def agent_iteration_span(step_id: str, agent_type: str, session_id: str, turn: int, max_turns: int):
+    """
+    WATCHTOWER: Span for each ReAct iteration within an agent step.
+    Span name: agent_loop.iteration_{agent_type}_{step_id}_{turn}
+    Groups LLM call, tool execution, and code execution for that turn.
+    """
+    tracer = get_tracer("agent_loop")
+    span_name = f"agent_loop.iteration_{agent_type}_{step_id}_{turn}"
+    with tracer.start_as_current_span(span_name) as span:
+        span.set_attribute("iteration", turn)
+        span.set_attribute("max_turns", max_turns)
+        span.set_attribute("agent", agent_type)
+        span.set_attribute("node_id", step_id)
+        span.set_attribute("session_id", session_id or "")
+        yield span
+
+
+@contextmanager
+def code_execution_span(step_id: str, session_id: str, code_variant_keys: list):
+    """
+    WATCHTOWER: Span for code execution (agent output with code_variants).
+    Span name: code.execution
+    """
+    tracer = get_tracer("agent_loop")
+    with tracer.start_as_current_span("code.execution") as span:
+        span.set_attribute("step_id", step_id)
+        span.set_attribute("session_id", session_id or "")
+        span.set_attribute("code_variant_keys", ",".join(str(k) for k in code_variant_keys))
+        yield span
+
+
+@contextmanager
+def sandbox_run_span(session_id: str, code_preview: str):
+    """
+    WATCHTOWER: Span for sandbox execution (UniversalSandbox.run).
+    Span name: sandbox.run
+    """
+    tracer = get_tracer("sandbox")
+    with tracer.start_as_current_span("sandbox.run") as span:
+        span.set_attribute("session_id", session_id or "")
+        span.set_attribute("code_preview", (code_preview or ""))
         yield span

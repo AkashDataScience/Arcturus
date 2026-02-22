@@ -9,6 +9,7 @@ from ops.tracing import (
     agent_plan_span,
     agent_execute_dag_span,
     agent_execute_node_span,
+    agent_iteration_span,
     attach_plan_graph_to_span,
 )
 from opentelemetry.trace import Status, StatusCode
@@ -25,23 +26,25 @@ from datetime import datetime
 # ===== EXPONENTIAL BACKOFF FOR TRANSIENT FAILURES =====
 
 async def retry_with_backoff(
-    async_func, 
-    max_retries: int = 3, 
+    async_func,
+    max_retries: int = 3,
     base_delay: float = 1.0,
-    retryable_errors: tuple = None
+    retryable_errors: tuple = None,
+    on_retry=None,
 ):
     """
     Retry an async function with exponential backoff.
-    
+
     Args:
         async_func: Async callable to execute
         max_retries: Maximum retry attempts (default: 3)
         base_delay: Initial delay in seconds (default: 1.0)
         retryable_errors: Tuple of exception types to retry on
-        
+        on_retry: Optional callback(attempt: int) called before each retry (1-based)
+
     Returns:
         Result of async_func on success
-        
+
     Raises:
         Last exception if all retries exhausted
     """
@@ -51,15 +54,17 @@ async def retry_with_backoff(
             ConnectionError,
             TimeoutError,
         )
-    
+
     last_exception = None
-    
+
     for attempt in range(max_retries):
         try:
             return await async_func()
         except retryable_errors as e:
             last_exception = e
             if attempt < max_retries - 1:
+                if on_retry:
+                    on_retry(attempt + 1)  # 1-based: first retry = 1
                 delay = base_delay * (2 ** attempt)  # 1s, 2s, 4s
                 log_step(f"Transient error: {type(e).__name__}. Retrying in {delay}s (attempt {attempt + 1}/{max_retries})", symbol="🔄")
                 await asyncio.sleep(delay)
@@ -68,7 +73,7 @@ async def retry_with_backoff(
         except Exception as e:
             # Non-retryable error, raise immediately
             raise
-    
+
     raise last_exception
 
 
@@ -142,8 +147,14 @@ class AgentLoop4:
                 
             log_step(f"✅ Resuming session {self.context.plan_graph.graph['session_id']} ({reset_count} steps reset)", symbol="▶️")
             
-            # 3. Execute DAG
-            return await self._execute_dag(self.context)
+            # 3. Execute DAG (WATCHTOWER)
+            # Always use current trace context (run_span from process_resume). Skip restoring
+            # old trace_id - that fragments the hierarchy (resumed spans end up in a different trace).
+            with agent_execute_dag_span(
+                session_id=self.context.plan_graph.graph.get("session_id", ""),
+                resumed=True,
+            ):
+                return await self._execute_dag(self.context)
             
         except Exception as e:
             log_error(f"Failed to resume session: {e}")
@@ -248,7 +259,13 @@ class AgentLoop4:
 
                     # WATCHTOWER: Planner phase span
                     with agent_plan_span() as plan_span:
-                        plan_result = await self._track_task(retry_with_backoff(run_planner))
+                        def on_plan_retry(attempt):
+                            plan_span.set_attribute("retry_attempt", attempt)
+                            plan_span.set_attribute("is_retry", True)
+
+                        plan_result = await self._track_task(
+                            retry_with_backoff(run_planner, on_retry=on_plan_retry)
+                        )
                         attach_plan_graph_to_span(plan_span, plan_result)
 
                     if self.context.stop_requested:
@@ -322,7 +339,9 @@ class AgentLoop4:
 
                     try:
                         # WATCHTOWER: DAG execution span (contains execute_node spans)
-                        with agent_execute_dag_span():
+                        with agent_execute_dag_span(
+                            session_id=self.context.plan_graph.graph.get("session_id", ""),
+                        ):
                             await self._track_task(self._execute_dag(self.context))
 
                         if self.context.stop_requested:
@@ -688,7 +707,8 @@ class AgentLoop4:
         step_data = context.get_step_data(step_id)
         agent_type = step_data["agent"]
         session_id_val = context.plan_graph.graph.get("session_id", "")
-        with agent_execute_node_span(step_id, agent_type, session_id_val) as span:
+        retry_attempt = step_data.get("_retry_count", 0)
+        with agent_execute_node_span(step_id, agent_type, session_id_val, retry_attempt=retry_attempt) as span:
             # 📡 EMIT EVENT
             await event_bus.publish("step_start", "AgentLoop4", {"step_id": step_id})
 
@@ -723,139 +743,152 @@ class AgentLoop4:
 
             # ReAct loop: agent can call tools, call_self, or produce final output
             for turn in range(1, max_turns + 1):
-                log_step(f"🔄 {agent_type} Iteration {turn}/{max_turns}", symbol="🔄")
+                with agent_iteration_span(step_id, agent_type, session_id_val, turn, max_turns) as iter_span:
+                    log_step(f"🔄 {agent_type} Iteration {turn}/{max_turns}", symbol="🔄")
 
-                # Run agent step (with retries for transient failures)
-                async def run_agent_step():
-                    return await self.agent_runner.run_agent(agent_type, current_input)
+                    # Run agent step (with retries for transient failures)
+                    async def run_agent_step():
+                        return await self.agent_runner.run_agent(agent_type, current_input)
 
-                try:
-                    result = await retry_with_backoff(run_agent_step)
-                except Exception as e:
-                    span.set_status(Status(StatusCode.ERROR, str(e)))
-                    span.record_exception(e)
-                    return {"success": False, "error": f"Agent failed after retries: {str(e)}"}
+                    def on_retry(attempt):
+                        iter_span.set_attribute("retry_attempt", attempt)
+                        iter_span.set_attribute("is_retry", True)
 
-                if not result["success"]:
-                    return result
-
-                output = result["output"]
-
-                # Clarification requested - pause for user input
-                if output.get("clarificationMessage"):
-                    return {
-                        "success": True,
-                        "status": "waiting_input",
-                        "output": output
-                    }
-
-                iterations_data.append({"iteration": turn, "output": output})
-
-                if context.stop_requested:
-                    log_step(f"🛑 {agent_type}: Stop requested, aborting iteration {turn}", symbol="🛑")
-                    return {"success": False, "error": "Stop requested"}
-
-                step_data = context.get_step_data(step_id)
-                step_data['iterations'] = iterations_data
-
-                # 1. Check for 'call_tool' (ReAct)
-                if output.get("call_tool"):
-                    tool_call = output["call_tool"]
-                    tool_name = tool_call.get("name")
-                    tool_args = tool_call.get("arguments", {})
-
-                    log_step(f"🛠️ Executing Tool: {tool_name}", payload=tool_args, symbol="⚙️")
-
-                    tool_executed = False
-                    skill_tool_result = None
-
-                    # Try local skill tools first, then MCP route
                     try:
-                        from core.registry import AgentRegistry
-                        from shared.state import get_skill_manager
-
-                        agent_config = AgentRegistry.get(agent_type)
-                        skill_mgr = get_skill_manager()
-
-                        if agent_config and "skills" in agent_config:
-                            possible_skills = agent_config["skills"]
-                            for skill_name in possible_skills:
-                                skill = skill_mgr.get_skill(skill_name)
-                                if skill:
-                                    for tool in skill.get_tools():
-                                        if getattr(tool, 'name', None) == tool_name:
-                                            log_step(f"🧩 Executing Local Skill Tool: {tool_name}", symbol="🧩")
-                                            if asyncio.iscoroutinefunction(tool.func):
-                                                skill_tool_result = await tool.func(**tool_args)
-                                            else:
-                                                skill_tool_result = tool.func(**tool_args)
-                                            tool_executed = True
-                                            break
-                                if tool_executed:
-                                    break
-
+                        result = await retry_with_backoff(run_agent_step, on_retry=on_retry)
                     except Exception as e:
-                        log_error(f"Local Skill Tool Execution Failed: {e}")
-                        tool_executed = True
-                        skill_tool_result = f"Error executing local skill tool: {str(e)}"
+                        span.set_status(Status(StatusCode.ERROR, str(e)))
+                        span.record_exception(e)
+                        return {"success": False, "error": f"Agent failed after retries: {str(e)}"}
 
-                    # Execute tool via MCP when not a local skill
-                    if not tool_executed:
-                        try:
-                            mcp_result = await self.multi_mcp.route_tool_call(tool_name, tool_args)
-                            if hasattr(mcp_result, 'content'):
-                                if isinstance(mcp_result.content, list):
-                                    skill_tool_result = "\n".join([str(item.text) for item in mcp_result.content if hasattr(item, "text")])
-                                else:
-                                    skill_tool_result = str(mcp_result.content)
-                            else:
-                                skill_tool_result = str(mcp_result)
-                        except Exception as e:
-                            log_error(f"Tool Execution Failed: {e}")
-                            current_input = build_agent_input(
-                                instruction="The tool execution failed. Try a different approach or tool.",
-                                previous_output=output,
-                                iteration_context={"tool_result": f"Error: {str(e)}"}
-                            )
-                            continue
+                    if not result["success"]:
+                        iter_span.set_attribute("trigger", "error")
+                        return result
 
-                    # Feed tool result back to agent for next iteration
-                    result_str = str(skill_tool_result)
-                    iterations_data[-1]["tool_result"] = result_str
-                    log_step(f"✅ Tool Result", payload={"result_preview": result_str[:200] + "..."}, symbol="🔌")
-                    instruction = output.get("thought", "Use the tool result to generate the final output.")
-                    if turn == max_turns - 1:
-                        instruction += " \n\n⚠️ WARNING: This is your FINAL turn. You MUST provide the final 'output' now. Do not call any more tools. Summarize what you have."
-                    current_input = build_agent_input(
-                        instruction=instruction,
-                        previous_output=output,
-                        iteration_context={"tool_result": result_str}
-                    )
-                    continue
+                    output = result["output"]
 
-                # 2. Check for call_self (Legacy/Advanced recursion)
-                elif output.get("call_self"):
-                    if context._has_executable_code(output):
-                        execution_result = await context._auto_execute_code(step_id, output)
-                        iterations_data[-1]["execution_result"] = execution_result
-                        if execution_result.get("status") == "success":
-                            execution_data = execution_result.get("result", {})
-                            inputs = {**inputs, **execution_data}
-                    current_input = build_agent_input(
-                        instruction=output.get("next_instruction", "Continue the task"),
-                        previous_output=output,
-                        iteration_context=output.get("iteration_context", {})
-                    )
-                    continue
+                    # Clarification requested - pause for user input
+                    if output.get("clarificationMessage"):
+                        iter_span.set_attribute("trigger", "clarification")
+                        return {
+                            "success": True,
+                            "status": "waiting_input",
+                            "output": output
+                        }
 
-                # 3. Final output (no tool/self call) - execute code if present, then return
-                else:
+                    iterations_data.append({"iteration": turn, "output": output})
+
                     if context.stop_requested:
+                        iter_span.set_attribute("trigger", "stopped")
+                        log_step(f"🛑 {agent_type}: Stop requested, aborting iteration {turn}", symbol="🛑")
                         return {"success": False, "error": "Stop requested"}
-                    if context._has_executable_code(output):
-                        execution_result = await context._auto_execute_code(step_id, output)
-                        iterations_data[-1]["execution_result"] = execution_result
-                    return result
+
+                    step_data = context.get_step_data(step_id)
+                    step_data['iterations'] = iterations_data
+
+                    # 1. Check for 'call_tool' (ReAct)
+                    if output.get("call_tool"):
+                        iter_span.set_attribute("trigger", "tool_call")
+                        tool_call = output["call_tool"]
+                        tool_name = tool_call.get("name")
+                        tool_args = tool_call.get("arguments", {})
+
+                        log_step(f"🛠️ Executing Tool: {tool_name}", payload=tool_args, symbol="⚙️")
+
+                        tool_executed = False
+                        skill_tool_result = None
+
+                        # Try local skill tools first, then MCP route
+                        try:
+                            from core.registry import AgentRegistry
+                            from shared.state import get_skill_manager
+
+                            agent_config = AgentRegistry.get(agent_type)
+                            skill_mgr = get_skill_manager()
+
+                            if agent_config and "skills" in agent_config:
+                                possible_skills = agent_config["skills"]
+                                for skill_name in possible_skills:
+                                    skill = skill_mgr.get_skill(skill_name)
+                                    if skill:
+                                        for tool in skill.get_tools():
+                                            if getattr(tool, 'name', None) == tool_name:
+                                                log_step(f"🧩 Executing Local Skill Tool: {tool_name}", symbol="🧩")
+                                                if asyncio.iscoroutinefunction(tool.func):
+                                                    skill_tool_result = await tool.func(**tool_args)
+                                                else:
+                                                    skill_tool_result = tool.func(**tool_args)
+                                                tool_executed = True
+                                                break
+                                    if tool_executed:
+                                        break
+
+                        except Exception as e:
+                            log_error(f"Local Skill Tool Execution Failed: {e}")
+                            tool_executed = True
+                            skill_tool_result = f"Error executing local skill tool: {str(e)}"
+
+                        # Execute tool via MCP when not a local skill
+                        if not tool_executed:
+                            try:
+                                mcp_result = await self.multi_mcp.route_tool_call(tool_name, tool_args)
+                                if hasattr(mcp_result, 'content'):
+                                    if isinstance(mcp_result.content, list):
+                                        skill_tool_result = "\n".join([str(item.text) for item in mcp_result.content if hasattr(item, "text")])
+                                    else:
+                                        skill_tool_result = str(mcp_result.content)
+                                else:
+                                    skill_tool_result = str(mcp_result)
+                            except Exception as e:
+                                log_error(f"Tool Execution Failed: {e}")
+                                current_input = build_agent_input(
+                                    instruction="The tool execution failed. Try a different approach or tool.",
+                                    previous_output=output,
+                                    iteration_context={"tool_result": f"Error: {str(e)}"}
+                                )
+                                continue
+
+                        # Feed tool result back to agent for next iteration
+                        result_str = str(skill_tool_result)
+                        iterations_data[-1]["tool_result"] = result_str
+                        log_step(f"✅ Tool Result", payload={"result_preview": result_str[:200] + "..."}, symbol="🔌")
+                        instruction = output.get("thought", "Use the tool result to generate the final output.")
+                        if turn == max_turns - 1:
+                            instruction += " \n\n⚠️ WARNING: This is your FINAL turn. You MUST provide the final 'output' now. Do not call any more tools. Summarize what you have."
+                        current_input = build_agent_input(
+                            instruction=instruction,
+                            previous_output=output,
+                            iteration_context={"tool_result": result_str}
+                        )
+                        continue
+
+                    # 2. Check for call_self (Legacy/Advanced recursion)
+                    elif output.get("call_self"):
+                        iter_span.set_attribute("trigger", "call_self")
+                        if context._has_executable_code(output):
+                            execution_result = await context._auto_execute_code(step_id, output)
+                            iterations_data[-1]["execution_result"] = execution_result
+                            if execution_result.get("status") == "success":
+                                execution_data = execution_result.get("result", {})
+                                inputs = {**inputs, **execution_data}
+                        current_input = build_agent_input(
+                            instruction=output.get("next_instruction", "Continue the task"),
+                            previous_output=output,
+                            iteration_context=output.get("iteration_context", {})
+                        )
+                        continue
+
+                    # 3. Final output (no tool/self call) - execute code if present, then return
+                    else:
+                        iter_span.set_attribute("trigger", "final")
+                        if context.stop_requested:
+                            return {"success": False, "error": "Stop requested"}
+                        if context._has_executable_code(output):
+                            execution_result = await context._auto_execute_code(step_id, output)
+                            iterations_data[-1]["execution_result"] = execution_result
+                            # Merge so mark_done skips re-execution (avoids duplicate code.execution span)
+                            output = context._merge_execution_results(output, execution_result)
+                        return {"success": True, "output": output}
 
             log_error(f"Max iterations ({max_turns}) reached for {step_id}. Returning last output (incomplete).")
         last_output = iterations_data[-1]["output"] if iterations_data else {"error": "No output produced"}
