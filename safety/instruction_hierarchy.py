@@ -9,11 +9,11 @@ from typing import Dict, Any, Tuple, List
 
 # Patterns that indicate attempts to override system instructions
 OVERRIDE_PATTERNS = [
-    r"ignore\s+(?:all|previous|prior|system|developer)\s+instructions?",
-    r"disregard\s+(?:all|previous|prior|system|developer)\s+instructions?",
-    r"forget\s+(?:all|previous|prior|system|developer)\s+instructions?",
-    r"override\s+(?:all|previous|prior|system|developer)\s+instructions?",
-    r"replace\s+(?:all|previous|prior|system|developer)\s+instructions?",
+    r"ignore\s+(?:all\s+)?(?:previous|prior|all|system|developer)\s+instructions?",
+    r"disregard\s+(?:all\s+)?(?:previous|prior|all|system|developer)\s+instructions?",
+    r"forget\s+(?:all\s+)?(?:previous|prior|all|system|developer)\s+instructions?",
+    r"override\s+(?:all\s+)?(?:previous|prior|all|system|developer)\s+instructions?",
+    r"replace\s+(?:all\s+)?(?:previous|prior|all|system|developer)\s+instructions?",
     r"you\s+are\s+now\s+.*\s+assistant",
     r"new\s+instructions?:",
     r"follow\s+these\s+new\s+instructions",

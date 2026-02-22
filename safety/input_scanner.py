@@ -8,22 +8,21 @@ import re
 import base64
 import binascii
 import unicodedata
-import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Tuple, Optional
 
-LAKERA_GUARD_API_KEY = os.getenv("LAKERA_GUARD_API_KEY")
-LAKERA_PROJECT_ID = os.getenv("LAKERA_PROJECT_ID", "project-XXXXXXXXXXX") # Default to a placeholder
+from safety.lakera_guard import LAKERA_GUARD_API_KEY, scan_lakera as _scan_lakera
 
 INJECTION_PATTERNS = [
-    r"ignore (previous|all) instructions",
-    r"disregard (previous|prior) instructions",
-    r"ignore your (system|developer) prompt",
-    r"follow these new instructions instead",
-    r"you are now .* assistant",
-    r"shutdown|format disk|rm -rf",
+    r"ignore\s+(?:all\s+)?(?:previous|prior|all)\s+instructions",
+    r"disregard\s+(?:all\s+)?(?:previous|prior)\s+instructions",
+    r"ignore\s+your\s+(?:system|developer)\s+prompt",
+    r"follow\s+these\s+new\s+instructions\s+instead",
+    r"you\s+are\s+now\s+.*\s+assistant",
+    r"shutdown|format\s+disk|rm\s+-rf",
     r"jailbreak",
-    r"suddenly do this",
+    r"suddenly\s+do\s+this",
+    r"call\s+the\s+['\"]execute_code['\"]\s+tool",  # Tool jailbreak attempt
 ]
 
 INJECTION_REGEX = re.compile("|".join(f"(?:{p})" for p in INJECTION_PATTERNS), re.I)
@@ -159,41 +158,6 @@ def scan_input_local(text: str) -> Dict[str, Any]:
         return {"allowed": allowed, "reason": reason, "hits": hits}
     except Exception as e:
         return {"allowed": False, "reason": f"scanner_error:{e}", "hits": []}
-
-def _scan_lakera(text: str) -> Dict[str, Any]:
-    """Helper function to scan with Lakera Guard."""
-    if not LAKERA_GUARD_API_KEY:
-        return {"allowed": True, "reason": "lakera_not_configured", "hits": [], "provider": "lakera"}
-    
-    try:
-        session = requests.Session()
-        response = session.post(
-            "https://api.lakera.ai/v2/guard",
-            json={"messages": [{"content": text, "role": "user"}], "project_id": LAKERA_PROJECT_ID},
-            headers={"Authorization": f"Bearer {LAKERA_GUARD_API_KEY}"},
-            timeout=5,
-        )
-        response.raise_for_status()
-        response_json = response.json()
-        
-        allowed = not response_json.get("flagged", False)
-        reason = "ok"
-        hits = []
-        if not allowed:
-            categories = response_json.get('results', [{}])[0].get('categories', {})
-            for category, flagged in categories.items():
-                if flagged:
-                    hits.append(category)
-            reason = ",".join(hits) if hits else "flagged_by_lakera"
-        
-        return {
-            "allowed": allowed,
-            "reason": reason,
-            "hits": hits,
-            "provider": "lakera"
-        }
-    except Exception as e:
-        return {"allowed": True, "reason": f"lakera_error:{str(e)}", "hits": [], "provider": "lakera"}
 
 
 def _scan_nemo(text: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
