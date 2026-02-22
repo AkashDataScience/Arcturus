@@ -19,7 +19,7 @@ class ModelManager:
     def __init__(self, model_name: str = None, provider: str = None, role: str = None):
         """
         Initialize ModelManager with flexible model specification.
-        
+
         Args:
             model_name: The model to use (key from models.json or raw name).
             provider: Optional explicit provider ("gemini" or "ollama").
@@ -27,7 +27,7 @@ class ModelManager:
         """
         self.config = json.loads(MODELS_JSON.read_text())
         self.profile = yaml.safe_load(PROFILE_YAML.read_text())
-        
+
         # Load Role Config
         if MODELS_YAML.exists():
             self.role_config = yaml.safe_load(MODELS_YAML.read_text())
@@ -38,10 +38,10 @@ class ModelManager:
         if role:
             if role not in self.role_config.get("roles", {}):
                 raise ValueError(f"Unknown role: '{role}'. Available: {list(self.role_config.get('roles', {}).keys())}")
-            
+
             # Override model_name with the one defined for the role
             model_name = self.role_config["roles"][role]
-            # Verify explicit provider setting isn't conflicting? 
+            # Verify explicit provider setting isn't conflicting?
             # We assume role config implies the correct provider via the model definition or name.
 
         # Load settings for Ollama URL
@@ -55,7 +55,7 @@ class ModelManager:
         if provider:
             self.model_type = provider
             self.text_model_key = model_name or "gemini-2.5-flash"
-            
+
             if provider == "gemini":
                 # Gemini: model_name is the actual Gemini model like "gemini-2.5-flash"
                 self.model_info = {
@@ -84,12 +84,12 @@ class ModelManager:
                 self.text_model_key = model_name
             else:
                 self.text_model_key = self.profile["llm"]["text_generation"]
-            
+
             # Validate that the model exists in config
             if self.text_model_key not in self.config["models"]:
                 available_models = list(self.config["models"].keys())
                 raise ValueError(f"Model '{self.text_model_key}' not found in models.json. Available: {available_models}")
-                
+
             self.model_info = self.config["models"][self.text_model_key]
             self.model_type = self.model_info["type"]
             self.config_from_file = True # Flag to indicate this came from models.json
@@ -121,7 +121,7 @@ class ModelManager:
 
     async def generate_content(self, contents: list) -> str:
         """Generate content with support for text and images.
-        
+
         Contents can contain:
         - str: Text content
         - PIL.Image: Image to process (will be base64-encoded for Ollama)
@@ -132,7 +132,7 @@ class ModelManager:
         elif self.model_type == "ollama":
             # Ollama multimodal: extract text and images separately
             return await self._ollama_generate_content(contents)
-        
+
         raise NotImplementedError(f"Unsupported model type: {self.model_type}")
 
     async def _ollama_generate_content(self, contents: list) -> str:
@@ -140,10 +140,10 @@ class ModelManager:
         import base64
         import io
         from PIL import Image as PILImage
-        
+
         text_parts = []
         images_base64 = []
-        
+
         for content in contents:
             if isinstance(content, str):
                 text_parts.append(content)
@@ -154,12 +154,12 @@ class ModelManager:
                     # Convert to RGB if necessary
                     if img.mode in ('RGBA', 'P'):
                         img = img.convert('RGB')
-                    
+
                     # Resize if too large (Ollama has limits)
                     MAX_DIM = 1024
                     if img.width > MAX_DIM or img.height > MAX_DIM:
                         img.thumbnail((MAX_DIM, MAX_DIM), PILImage.Resampling.LANCZOS)
-                    
+
                     # Encode to base64
                     buf = io.BytesIO()
                     img.save(buf, format="JPEG", quality=85)
@@ -167,9 +167,9 @@ class ModelManager:
                     images_base64.append(encoded)
                 except Exception as e:
                     print(f"⚠️ Failed to encode image for Ollama: {e}")
-        
+
         prompt = "\n".join(text_parts)
-        
+
         if images_base64:
             # Use Ollama's multimodal format with images array
             return await self._ollama_generate_with_images(prompt, images_base64)
@@ -211,8 +211,9 @@ class ModelManager:
         async with ModelManager._lock:
             now = time.time()
             elapsed = now - ModelManager._last_call
-            if elapsed < 4.5:  # 4.5s buffer for safety
+            if elapsed < 4.5: # 4.5s buffer for safety
                 sleep_time = 4.5 - elapsed
+                # print(f"[Rate Limit] Sleeping for {sleep_time:.2f}s...")
                 await asyncio.sleep(sleep_time)
             ModelManager._last_call = time.time()
 
