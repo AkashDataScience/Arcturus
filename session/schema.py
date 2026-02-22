@@ -219,8 +219,8 @@ class CheckpointSnapshot(BaseModel):
         )
 
     def compute_content_hash(self) -> str:
-        """Compute and set content_hash; return it. Hash excludes content_hash field."""
-        d = self.model_dump(exclude={"content_hash"})
+        """Compute and set content_hash; return it. Hash excludes content_hash and created_at for determinism."""
+        d = self.model_dump(exclude={"content_hash", "created_at"})
         canonical = json.dumps(d, sort_keys=True, ensure_ascii=False)
         self.content_hash = hashlib.sha256(canonical.encode()).hexdigest()[:24]
         return self.content_hash

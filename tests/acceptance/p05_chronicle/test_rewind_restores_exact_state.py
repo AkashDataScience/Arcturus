@@ -67,17 +67,20 @@ def test_08_ci_check_declared_in_charter() -> None:
 
 
 def test_09_event_log_entry_canonical_json_determinism() -> None:
-    """Same entry produces identical canonical JSON."""
+    """Same entry produces identical canonical JSON when given same timestamp."""
     from session.schema import EventLogEntry, EventType
 
+    ts = "2025-01-15T12:00:00.000000Z"
     e1 = EventLogEntry(
         type=EventType.STEP_START,
+        timestamp=ts,
         sequence=1,
         session_id="s1",
         payload={"step_id": "Step1", "agent": "CoderAgent"},
     )
     e2 = EventLogEntry(
         type=EventType.STEP_START,
+        timestamp=ts,
         sequence=1,
         session_id="s1",
         payload={"step_id": "Step1", "agent": "CoderAgent"},
@@ -86,15 +89,23 @@ def test_09_event_log_entry_canonical_json_determinism() -> None:
 
 
 def test_10_event_log_entry_content_hash_determinism() -> None:
-    """Same entry produces identical content hash."""
+    """Same entry produces identical content hash when given same timestamp."""
     from session.schema import EventLogEntry, EventType
 
-    payload = {"step_id": "S1", "tool_name": "read_file"}
+    ts = "2025-01-15T12:00:00.000000Z"
     e1 = EventLogEntry(
-        type=EventType.TOOL_INVOCATION, sequence=2, session_id="s1", payload=payload
+        type=EventType.TOOL_INVOCATION,
+        timestamp=ts,
+        sequence=2,
+        session_id="s1",
+        payload={"step_id": "S1", "tool_name": "read_file"},
     )
     e2 = EventLogEntry(
-        type=EventType.TOOL_INVOCATION, sequence=2, session_id="s1", payload=payload.copy()
+        type=EventType.TOOL_INVOCATION,
+        timestamp=ts,
+        sequence=2,
+        session_id="s1",
+        payload={"step_id": "S1", "tool_name": "read_file"},
     )
     assert e1.content_hash() == e2.content_hash()
     assert len(e1.content_hash()) == 16
@@ -109,6 +120,7 @@ def test_11_create_checkpoint_deterministic_hash() -> None:
         ev_dir = Path(tmp) / "events"
         ev_dir.mkdir()
         graph = {"nodes": [{"id": "A"}], "links": []}
+        fixed_created_at = "2025-01-15T12:00:00.000000Z"
         c1 = create_checkpoint(
             session_id="s1",
             trigger="step_complete",
@@ -116,6 +128,7 @@ def test_11_create_checkpoint_deterministic_hash() -> None:
             event_log_path=ev_dir / "events_s1.ndjson",
             last_sequence=0,
             checkpoint_dir=cp_dir,
+            created_at=fixed_created_at,
         )
         c2 = create_checkpoint(
             session_id="s1",
@@ -124,6 +137,7 @@ def test_11_create_checkpoint_deterministic_hash() -> None:
             event_log_path=ev_dir / "events_s1.ndjson",
             last_sequence=0,
             checkpoint_dir=cp_dir,
+            created_at=fixed_created_at,
         )
         assert c1.content_hash == c2.content_hash
         assert c1.checkpoint_id == c2.checkpoint_id

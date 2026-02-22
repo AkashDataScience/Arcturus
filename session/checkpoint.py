@@ -59,6 +59,7 @@ def create_checkpoint(
     event_log_path: Optional[Path] = None,
     last_sequence: Optional[int] = None,
     checkpoint_dir: Optional[Path] = None,
+    created_at: Optional[str] = None,
 ) -> CheckpointSnapshot:
     """
     Create a deterministic checkpoint snapshot.
@@ -83,7 +84,7 @@ def create_checkpoint(
         checkpoint_id="",  # Set after hash
         session_id=session_id,
         trigger=trigger,
-        created_at=datetime.utcnow().isoformat() + "Z",
+        created_at=created_at or (datetime.utcnow().isoformat() + "Z"),
         event_count=event_count,
         last_sequence=last_sequence or 0,
         graph_snapshot=graph_snap,
