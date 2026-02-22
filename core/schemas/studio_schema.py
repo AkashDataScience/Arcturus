@@ -76,10 +76,11 @@ class SlideElement(BaseModel):
 
 class Slide(BaseModel):
     id: str
-    slide_type: str  # title, content, two_column, comparison, timeline, chart, image_text, quote, code, team
+    slide_type: str  # title, content, two_column, comparison, timeline, chart, image_text, quote, code, team, agenda, table
     title: Optional[str] = None
     elements: List[SlideElement] = Field(default_factory=list)
     speaker_notes: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class SlidesContentTree(BaseModel):

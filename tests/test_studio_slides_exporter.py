@@ -792,3 +792,364 @@ def test_export_chart_has_container_card(default_theme, tmp_path):
     # Should have both a chart and rounded rectangle shapes (container card)
     has_chart = any(s.has_chart for s in chart_slide.shapes)
     assert has_chart, "Chart slide should have a chart"
+
+
+# === Phase 8: Visual Polish Upgrade Tests ===
+
+class TestAgendaSlide:
+    def test_agenda_slide_renders_numbered_cards(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Agenda Test",
+            slides=[Slide(
+                id="s1", slide_type="agenda", title="Agenda",
+                elements=[
+                    SlideElement(id="e1", type="bullet_list", content=[
+                        "Introduction: Welcome and overview",
+                        "Problem: Define the challenge",
+                        "Solution: Our proposed approach",
+                    ]),
+                ],
+                speaker_notes="Walk through the agenda.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "agenda.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        slide = prs.slides[0]
+        texts = [s.text_frame.text for s in slide.shapes if s.has_text_frame]
+        all_text = " ".join(texts)
+        assert "Agenda" in all_text
+        assert "Introduction" in all_text
+        # Should have numbered badges (1, 2, 3)
+        assert any("1" in t for t in texts)
+        assert any("2" in t for t in texts)
+
+    def test_agenda_slide_6_items_2x3_grid(self, tmp_path):
+        items = [f"Topic {i}: Description {i}" for i in range(1, 7)]
+        ct = SlidesContentTree(
+            deck_title="Agenda Grid",
+            slides=[Slide(
+                id="s1", slide_type="agenda", title="Agenda",
+                elements=[SlideElement(id="e1", type="bullet_list", content=items)],
+                speaker_notes="Notes.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "agenda_grid.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        assert len(prs.slides) == 1
+        # Should render without crash and have numbered badges up to 6
+        texts = [s.text_frame.text for s in prs.slides[0].shapes if s.has_text_frame]
+        assert any("6" in t for t in texts)
+
+
+class TestTableSlide:
+    def test_table_slide_has_table_shape(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Table Test",
+            slides=[Slide(
+                id="s1", slide_type="table", title="Feature Comparison",
+                elements=[
+                    SlideElement(id="e1", type="table_data", content={
+                        "headers": ["Feature", "Plan A", "Plan B"],
+                        "rows": [
+                            ["Storage", "10 GB", "100 GB"],
+                            ["Users", "5", "Unlimited"],
+                        ],
+                    }),
+                ],
+                speaker_notes="Compare plans.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "table.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        slide = prs.slides[0]
+        has_table = any(s.has_table for s in slide.shapes)
+        assert has_table, "Table slide should contain a table shape"
+
+    def test_table_slide_header_styled(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Table Header",
+            slides=[Slide(
+                id="s1", slide_type="table", title="Data",
+                elements=[
+                    SlideElement(id="e1", type="table_data", content={
+                        "headers": ["Name", "Value"],
+                        "rows": [["Alpha", "100"]],
+                    }),
+                ],
+                speaker_notes="Notes.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "table_header.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        slide = prs.slides[0]
+        for shape in slide.shapes:
+            if shape.has_table:
+                header_cell = shape.table.cell(0, 0)
+                assert header_cell.text == "Name"
+                # Header should have fill
+                assert header_cell.fill.type is not None
+                return
+        pytest.fail("No table shape found")
+
+    def test_table_slide_with_source_citation(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Table Source",
+            slides=[Slide(
+                id="s1", slide_type="table", title="Data",
+                elements=[
+                    SlideElement(id="e1", type="table_data", content={
+                        "headers": ["A", "B"],
+                        "rows": [["1", "2"]],
+                    }),
+                    SlideElement(id="e2", type="source_citation",
+                                 content="Source: Annual Report 2025"),
+                ],
+                speaker_notes="Notes.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "table_source.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        texts = [s.text_frame.text for s in prs.slides[0].shapes if s.has_text_frame]
+        assert any("Source: Annual Report" in t for t in texts)
+
+    def test_table_slide_empty_data_no_crash(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Table Empty",
+            slides=[Slide(
+                id="s1", slide_type="table", title="Empty Table",
+                elements=[
+                    SlideElement(id="e1", type="table_data", content={}),
+                ],
+                speaker_notes="Notes.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "table_empty.pptx"
+        export_to_pptx(ct, theme, output)
+        assert output.exists()
+
+
+class TestEnhancedSectionDivider:
+    def test_section_divider_has_accent_underline(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Divider Accent",
+            slides=[Slide(
+                id="s1", slide_type="section_divider", title="Section One",
+                elements=[], speaker_notes="Break.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "divider_accent.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        slide = prs.slides[0]
+        # Should have a thin horizontal rule (~3" wide)
+        thin_rects = []
+        for shape in slide.shapes:
+            if hasattr(shape, 'height') and shape.height <= Inches(0.06):
+                thin_rects.append(shape)
+        assert len(thin_rects) >= 1, "Section divider should have accent underline"
+
+    def test_section_divider_has_decorative_dots(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Divider Dots",
+            slides=[Slide(
+                id="s1", slide_type="section_divider", title="Section",
+                elements=[], speaker_notes="Break.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "divider_dots.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        slide = prs.slides[0]
+        # Should have small oval shapes (decorative dots) near bottom-right
+        ovals = []
+        for s in slide.shapes:
+            try:
+                if s.auto_shape_type == 9:  # OVAL
+                    ovals.append(s)
+            except (ValueError, AttributeError):
+                pass
+        assert len(ovals) >= 3, "Section divider should have 3 decorative dots"
+
+
+class TestEnhancedTitle:
+    def test_title_slide_with_date_metadata(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Date Test",
+            slides=[Slide(
+                id="s1", slide_type="title", title="AI in 2025",
+                elements=[SlideElement(id="e1", type="subtitle", content="A Deep Dive")],
+                speaker_notes="Open.",
+                metadata={"date": "Feb 2025"},
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "title_date.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        texts = [s.text_frame.text for s in prs.slides[0].shapes if s.has_text_frame]
+        all_text = " ".join(texts)
+        assert "Feb 2025" in all_text, "Date metadata should appear"
+
+    def test_closing_title_with_stats_dividers(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Closing Stats",
+            slides=[
+                Slide(id="s1", slide_type="title", title="Opening",
+                      elements=[SlideElement(id="e1", type="title", content="Opening")],
+                      speaker_notes="Open."),
+                Slide(id="s2", slide_type="title", title="Thank You",
+                      elements=[
+                          SlideElement(id="e2", type="subtitle", content="Questions?"),
+                          SlideElement(id="e3", type="stat_callout", content=[
+                              {"value": "85%", "label": "Satisfaction"},
+                              {"value": "2.4M", "label": "Users"},
+                          ]),
+                      ],
+                      speaker_notes="Close."),
+            ],
+        )
+        theme = get_theme()
+        output = tmp_path / "closing_stats.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        closing = prs.slides[1]
+        texts = [s.text_frame.text for s in closing.shapes if s.has_text_frame]
+        all_text = " ".join(texts)
+        assert "85%" in all_text, "Closing title should show stats"
+        assert "2.4M" in all_text
+
+
+class TestEnhancedTimeline:
+    def test_timeline_card_layout_pipe_format(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Timeline Cards",
+            slides=[Slide(
+                id="s1", slide_type="timeline", title="Project Roadmap",
+                elements=[SlideElement(id="e1", type="bullet_list", content=[
+                    "Q1 2025 | Launch MVP | Initial product release | MILESTONE",
+                    "Q2 2025 | Scale | Expand user base | GROWTH",
+                ])],
+                speaker_notes="Walk through timeline.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "timeline_cards.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        texts = [s.text_frame.text for s in prs.slides[0].shapes if s.has_text_frame]
+        all_text = " ".join(texts)
+        assert "Q1 2025" in all_text, "Date should be rendered"
+        assert "Launch MVP" in all_text, "Title should be rendered"
+        assert "MILESTONE" in all_text, "Tag badge should be rendered"
+
+    def test_timeline_plain_text_backward_compat(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Timeline Plain",
+            slides=[Slide(
+                id="s1", slide_type="timeline", title="Steps",
+                elements=[SlideElement(id="e1", type="bullet_list", content=[
+                    "Step one happens first",
+                    "Step two follows",
+                ])],
+                speaker_notes="Notes.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "timeline_plain.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        texts = [s.text_frame.text for s in prs.slides[0].shapes if s.has_text_frame]
+        all_text = " ".join(texts)
+        assert "Step one" in all_text, "Plain text items should render"
+        # Should have accent circles (ovals) for backward compat
+        ovals = []
+        for s in prs.slides[0].shapes:
+            try:
+                if s.auto_shape_type == 9:  # OVAL
+                    ovals.append(s)
+            except (ValueError, AttributeError):
+                pass
+        assert len(ovals) >= 2, "Plain timeline should have accent circles"
+
+
+class TestEnhancedComparison:
+    def test_comparison_with_column_headers(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Compare Headers",
+            slides=[Slide(
+                id="s1", slide_type="comparison", title="A vs B",
+                elements=[
+                    SlideElement(id="e1", type="body", content="Option A\nFirst option details"),
+                    SlideElement(id="e2", type="body", content="Option B\nSecond option details"),
+                ],
+                speaker_notes="Compare.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "compare_headers.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        texts = [s.text_frame.text for s in prs.slides[0].shapes if s.has_text_frame]
+        all_text = " ".join(texts)
+        assert "Option A" in all_text
+        assert "Option B" in all_text
+
+    def test_comparison_with_callout_box(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Compare Callout",
+            slides=[Slide(
+                id="s1", slide_type="comparison", title="Pros vs Cons",
+                elements=[
+                    SlideElement(id="e1", type="body", content="Pro arguments."),
+                    SlideElement(id="e2", type="body", content="Con arguments."),
+                    SlideElement(id="e3", type="callout_box", content={
+                        "text": "The best choice depends on context",
+                        "attribution": "Expert Panel",
+                    }),
+                ],
+                speaker_notes="Compare.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "compare_callout.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        texts = [s.text_frame.text for s in prs.slides[0].shapes if s.has_text_frame]
+        all_text = " ".join(texts)
+        assert "best choice depends" in all_text, "Callout text should be rendered"
+        assert "Expert Panel" in all_text, "Attribution should be rendered"
+
+
+# === Phase 8C: Prompt Tests ===
+
+class TestPromptUpdates:
+    def test_outline_prompt_includes_agenda_table(self):
+        from core.studio.prompts import get_outline_prompt
+        from core.schemas.studio_schema import ArtifactType
+        prompt = get_outline_prompt(ArtifactType.slides, "test", {})
+        assert "agenda" in prompt
+        assert "table" in prompt
+
+    def test_draft_prompt_includes_table_data_schema(self):
+        from core.studio.prompts import get_draft_prompt
+        from core.schemas.studio_schema import ArtifactType, Outline, OutlineItem
+        outline = Outline(artifact_type=ArtifactType.slides, title="Test", items=[
+            OutlineItem(id="1", title="Slide 1", description="Test slide"),
+        ])
+        prompt = get_draft_prompt(ArtifactType.slides, outline)
+        assert "table_data" in prompt
+        assert "callout_box" in prompt
+        assert "source_citation" in prompt

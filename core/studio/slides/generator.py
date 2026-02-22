@@ -13,9 +13,11 @@ _FILLER_TEMPLATES = [
     ("Supporting Evidence", "Data and references that reinforce key claims.", "content"),
     ("Deep Dive", "Detailed exploration of a critical subtopic.", "content"),
     ("Lessons Learned", "Practical wisdom gained from experience.", "two_column"),
+    ("Agenda Overview", "Preview the key topics and structure of this presentation.", "agenda"),
+    ("Data Summary", "Tabular comparison of key metrics and dimensions.", "table"),
 ]
 
-MIN_SLIDES = 8
+MIN_SLIDES = 3
 MAX_SLIDES = 15
 DEFAULT_SLIDES = 10
 
@@ -26,7 +28,7 @@ def compute_seed(artifact_id: str) -> int:
 
 
 def clamp_slide_count(requested: int | float | str | None = None) -> int:
-    """Clamp requested slide count to [8, 15] range.
+    """Clamp requested slide count to [MIN_SLIDES, MAX_SLIDES] range.
 
     Returns DEFAULT_SLIDES if requested is None or invalid.
     """
@@ -102,7 +104,7 @@ def plan_slide_sequence(
 
 def _prevent_consecutive_types(sequence: list[str], rng: random.Random) -> list[str]:
     """Swap consecutive same-type body slides to ensure layout variety."""
-    swap_pool = ["content", "two_column", "stat", "comparison", "image_text"]
+    swap_pool = ["content", "two_column", "stat", "comparison", "image_text", "agenda", "table"]
     result = list(sequence)
     for i in range(1, len(result) - 1):  # skip opening/closing
         if result[i] == result[i - 1] and result[i] not in ("title", "section_divider"):

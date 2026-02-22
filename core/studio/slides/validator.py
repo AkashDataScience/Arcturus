@@ -67,6 +67,15 @@ def validate_pptx(
     from core.studio.slides.exporter import SLIDE_WIDTH, SLIDE_HEIGHT
     BLOCK_CHAR_LIMIT = 800
     SLIDE_CHAR_LIMIT = 1600
+    TABLE_SLIDE_CHAR_LIMIT = 2400
+
+    # Determine which slides are table type (for relaxed limits)
+    _table_slide_indices = set()
+    if content_tree is not None:
+        ct_slides = content_tree.slides if hasattr(content_tree, 'slides') else []
+        for idx, ct_slide in enumerate(ct_slides):
+            if ct_slide.slide_type == "table":
+                _table_slide_indices.add(idx)
 
     try:
         from pptx import Presentation as _Prs
@@ -108,9 +117,10 @@ def validate_pptx(
                     except Exception:
                         pass
 
-            if slide_total > SLIDE_CHAR_LIMIT:
+            effective_limit = TABLE_SLIDE_CHAR_LIMIT if slide_idx in _table_slide_indices else SLIDE_CHAR_LIMIT
+            if slide_total > effective_limit:
                 layout_errors.append(
-                    f"Slide {slide_idx + 1}: total text density exceeds {SLIDE_CHAR_LIMIT} chars ({slide_total} chars)"
+                    f"Slide {slide_idx + 1}: total text density exceeds {effective_limit} chars ({slide_total} chars)"
                 )
     except Exception:
         pass

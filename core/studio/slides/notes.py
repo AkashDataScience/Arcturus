@@ -30,6 +30,11 @@ _TEMPLATES = {
     "quote": "Read the quote with emphasis. Explain why this perspective matters and how it connects to the broader argument of your presentation.",
     "code": "Walk through the code step by step. Highlight the key logic and explain why this implementation approach was chosen.",
     "team": "Introduce each team member briefly. Highlight relevant expertise and explain how the team composition supports your project goals.",
+    "stat": "Highlight the key metric and explain why it matters. Connect the numbers to your core argument and give the audience context for interpretation.",
+    "section_divider": "Signal the transition to a new section. Briefly preview what this section will cover and why it matters in the overall narrative.",
+    "image_full": "Draw the audience's attention to the visual. Explain its significance and how it relates to the presentation's core message.",
+    "agenda": "Preview the structure of the presentation. Walk through each agenda item briefly so the audience knows what to expect.",
+    "table": "Walk through the key data points in the table. Highlight notable trends or outliers and explain what the data means for your argument.",
 }
 
 
@@ -154,6 +159,7 @@ def repair_speaker_notes(content_tree: SlidesContentTree) -> SlidesContentTree:
             title=slide.title,
             elements=slide.elements,
             speaker_notes=notes,
+            metadata=slide.metadata,
         ))
 
     return SlidesContentTree(

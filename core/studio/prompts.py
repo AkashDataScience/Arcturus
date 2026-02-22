@@ -91,8 +91,13 @@ def _get_type_specific_outline_guidance(artifact_type: ArtifactType) -> str:
   * code — Technical slide with monospace code block
   * team — Team members, credits, or acknowledgments
   * section_divider — Section break slide with large section number and title (use between major topic shifts)
+  * agenda — Table of contents / overview with numbered cards (use as slide 2 after title)
+  * table — Data table with styled header row, alternating bands, and optional status badges
 - When the topic involves data, metrics, or KPIs, prefer stat or chart slide types
 - For decks with 10+ slides, insert 1-2 section_divider slides to break the deck into logical sections
+- Include an agenda slide as slide 2 (after title) for decks with 8+ slides
+- Use table slide type when comparing platforms, tools, or features across dimensions
+- Number content titles with section prefix (e.g., "1.1 Title - Subtitle") to group under section dividers
 - Bullet points should be SHORT phrases (6-8 words max), not full sentences
 - Assign a slide_type to each item in the description field (e.g., "slide_type: two_column")"""
 
@@ -126,10 +131,10 @@ def _get_type_specific_draft_schema(artifact_type: ArtifactType) -> str:
   "slides": [
     {
       "id": "s1",
-      "slide_type": "title|content|two_column|comparison|timeline|chart|stat|image_text|image_full|quote|code|team|section_divider",
+      "slide_type": "title|content|two_column|comparison|timeline|chart|stat|image_text|image_full|quote|code|team|section_divider|agenda|table",
       "title": "Slide title",
       "elements": [
-        {"id": "e1", "type": "title|subtitle|kicker|takeaway|body|bullet_list|image|chart|code|quote|stat_callout", "content": "..."}
+        {"id": "e1", "type": "title|subtitle|kicker|takeaway|body|bullet_list|image|chart|code|quote|stat_callout|table_data|tag_badge|callout_box|source_citation|progress_bar", "content": "..."}
       ],
       "speaker_notes": "Notes for the presenter"
     }
@@ -165,12 +170,24 @@ For elements with type="stat_callout", content MUST be a JSON array of stat obje
 [{"value": "85%", "label": "Customer Satisfaction"}, {"value": "2.4M", "label": "Active Users"}]
 Include 1-3 stat objects per slide. Values should be punchy numbers/percentages.
 
+For "table_data" elements: content = {"headers": ["Col1", "Col2", "Status"], "rows": [["Cell1", "Cell2", "HIGH"], ...], "badge_column": 2}
+For "callout_box" elements: content = {"text": "Synthesizing insight quote", "attribution": "Source"}
+For "source_citation" elements: content = "Source: Company Annual Report 2025"
+For "tag_badge" elements: content = "TAG LABEL"
+
+For agenda slides: bullet_list items formatted as "Section Title: Brief description"
+For timeline slides: bullet_list items formatted as "Date | Event Title | Description | CATEGORY TAG"
+For comparison slides: include a callout_box element with a synthesizing insight
+For title slides: set metadata.date and metadata.category for enhanced visuals
+
 SLIDE CONTENT DENSITY RULES (mandatory):
 - MAX 6 bullets per slide, MAX 8 words per bullet
 - MAX 3 short sentences per body element (25 words max per sentence)
 - The slide should contain MAX 30% of the information (key phrases only). The other 70% belongs in speaker_notes
 - NEVER use placeholder text like "Content to be developed", "TBD", "Lorem ipsum", or "To be added"
 - Every slide must have substantive, specific content — no filler
+- agenda slides: MAX 6 items in bullet_list, each as "Title: Description"
+- table slides: MAX 8 rows, MAX 6 columns
 
 SPEAKER NOTES REQUIREMENTS (mandatory for every slide):
 - Write 2-4 concise sentences of presenter guidance per slide

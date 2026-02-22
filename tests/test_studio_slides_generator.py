@@ -142,9 +142,18 @@ def test_enforce_slide_count_over_max():
 
 
 def test_enforce_slide_count_under_min():
-    ct = _make_content_tree(5)
+    ct = _make_content_tree(2)
     result = enforce_slide_count(ct)
     assert len(result.slides) == MIN_SLIDES
+
+
+def test_enforce_slide_count_five_slides_no_padding():
+    """A 5-slide deck should stay at 5 slides (no filler padding)."""
+    ct = _make_content_tree(5)
+    result = enforce_slide_count(ct)
+    assert len(result.slides) == 5
+    # No filler slides injected
+    assert all(not s.id.startswith("filler") for s in result.slides)
 
 
 def test_enforce_slide_count_single_slide_keeps_original_first():

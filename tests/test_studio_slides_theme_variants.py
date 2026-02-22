@@ -5,7 +5,8 @@ import re
 import pytest
 
 from core.studio.slides.themes import (
-    _FONT_PAIRS,
+    _FONT_COMPAT_GROUPS,
+    _THEME_FONT_GROUP,
     _check_contrast,
     generate_theme_variant,
     get_theme,
@@ -15,7 +16,7 @@ from core.studio.slides.themes import (
 
 HEX_PATTERN = re.compile(r"^#[0-9A-Fa-f]{6}$")
 VARIANT_ID_PATTERN = re.compile(r"^.+--v\d{2}$")
-_FLAT_FONTS = {f for pair in _FONT_PAIRS for f in pair}
+_FLAT_FONTS = {f for pairs in _FONT_COMPAT_GROUPS.values() for pair in pairs for f in pair}
 
 
 def test_generate_variant_deterministic():
@@ -72,10 +73,40 @@ def test_variant_hex_colors_valid():
 
 
 def test_variant_fonts_from_allowlist():
+    """Variant fonts come from the mood-compatible group for each theme."""
+    # One representative theme per mood group
+    representatives = {
+        "formal": "corporate-blue",
+        "modern": "minimal-light",
+        "warm": "nature-green",
+        "bold": "startup-bold",
+    }
+    for group_name, theme_id in representatives.items():
+        group_fonts = {f for pair in _FONT_COMPAT_GROUPS[group_name] for f in pair}
+        for seed in range(1, 7):
+            v = generate_theme_variant(theme_id, seed)
+            assert v.font_heading in group_fonts, (
+                f"font_heading={v.font_heading} not in {group_name} group for {theme_id}"
+            )
+            assert v.font_body in group_fonts, (
+                f"font_body={v.font_body} not in {group_name} group for {theme_id}"
+            )
+
+
+def test_variant_fonts_in_flat_allowlist():
+    """All variant fonts across all themes are in the global flat allowlist."""
     for seed in range(1, 7):
         v = generate_theme_variant("corporate-blue", seed)
         assert v.font_heading in _FLAT_FONTS, f"font_heading={v.font_heading} not in allowlist"
         assert v.font_body in _FLAT_FONTS, f"font_body={v.font_body} not in allowlist"
+
+
+def test_all_themes_have_font_group():
+    """Every registered theme has a mood group assignment."""
+    from core.studio.slides.themes import get_theme_ids
+    base_ids = get_theme_ids(include_variants=False)
+    for base_id in base_ids:
+        assert base_id in _THEME_FONT_GROUP, f"{base_id} missing from _THEME_FONT_GROUP"
 
 
 def test_variant_background_style_valid():
