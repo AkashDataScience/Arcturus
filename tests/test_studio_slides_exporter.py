@@ -9,7 +9,7 @@ from pptx.util import Inches
 from core.schemas.studio_schema import Slide, SlideElement, SlidesContentTree
 from core.studio.slides.exporter import (
     SLIDE_HEIGHT, SLIDE_WIDTH, _DESIGN_TOKENS, _blend_color, _build_chart_palette,
-    export_to_pptx,
+    _parse_markdown_runs, export_to_pptx,
 )
 from core.studio.slides.themes import get_theme, generate_theme_variant
 
@@ -471,3 +471,148 @@ def test_export_chart_has_gridlines(default_theme, tmp_path):
             assert chart.value_axis.has_major_gridlines
             return
     pytest.fail("No chart shape found")
+
+
+# === Markdown inline formatting tests ===
+
+class TestParseMarkdownRuns:
+    def test_plain_text(self):
+        result = _parse_markdown_runs("plain text")
+        assert result == [("plain text", False, False)]
+
+    def test_bold(self):
+        result = _parse_markdown_runs("before **bold** after")
+        assert result == [
+            ("before ", False, False),
+            ("bold", True, False),
+            (" after", False, False),
+        ]
+
+    def test_italic(self):
+        result = _parse_markdown_runs("before *italic* after")
+        assert result == [
+            ("before ", False, False),
+            ("italic", False, True),
+            (" after", False, False),
+        ]
+
+    def test_bold_italic(self):
+        result = _parse_markdown_runs("***both***")
+        assert result == [("both", True, True)]
+
+    def test_multiple_bold_spans(self):
+        result = _parse_markdown_runs("**a** and **b**")
+        assert result == [
+            ("a", True, False),
+            (" and ", False, False),
+            ("b", True, False),
+        ]
+
+    def test_empty_string(self):
+        result = _parse_markdown_runs("")
+        assert result == [("", False, False)]
+
+    def test_unclosed_marker_treated_as_literal(self):
+        result = _parse_markdown_runs("**unclosed text")
+        assert result == [("**unclosed text", False, False)]
+
+    def test_space_delimited_asterisks_are_literal(self):
+        """Asterisks used as operators (e.g. 2 * 3 * 4) must not be parsed as emphasis."""
+        result = _parse_markdown_runs("2 * 3 * 4")
+        assert result == [("2 * 3 * 4", False, False)]
+
+    def test_bold_at_start(self):
+        result = _parse_markdown_runs("**Downtime:** causes issues")
+        assert result == [
+            ("Downtime:", True, False),
+            (" causes issues", False, False),
+        ]
+
+
+class TestMarkdownInPptxExport:
+    def test_bullet_list_bold_rendered(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="MD Test",
+            slides=[Slide(
+                id="s1", slide_type="content", title="Title",
+                elements=[SlideElement(
+                    id="e1", type="bullet_list",
+                    content=["**Downtime:** causes issues", "Normal item"],
+                )],
+                speaker_notes="Notes.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "md_bullet.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if not shape.has_text_frame:
+                    continue
+                full_text = shape.text_frame.text
+                if "Downtime" in full_text:
+                    assert "**" not in full_text, "Markdown markers should not appear in PPTX"
+                    for p in shape.text_frame.paragraphs:
+                        bold_runs = [r for r in p.runs if r.font.bold]
+                        if any("Downtime" in r.text for r in bold_runs):
+                            return
+        pytest.fail("No bold 'Downtime' run found in exported PPTX")
+
+    def test_body_text_mixed_formatting(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="MD Body",
+            slides=[Slide(
+                id="s1", slide_type="content", title="Title",
+                elements=[SlideElement(
+                    id="e1", type="body",
+                    content="This is **bold** and *italic* text.",
+                )],
+                speaker_notes="Notes.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "md_body.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if not shape.has_text_frame:
+                    continue
+                full_text = shape.text_frame.text
+                if "bold" in full_text and "italic" in full_text:
+                    assert "**" not in full_text
+                    assert full_text.count("*") == 0
+                    for p in shape.text_frame.paragraphs:
+                        for r in p.runs:
+                            if r.text == "bold":
+                                assert r.font.bold
+                            if r.text == "italic":
+                                assert r.font.italic
+                    return
+        pytest.fail("Body text with mixed formatting not found")
+
+    def test_code_slide_preserves_asterisks(self, tmp_path):
+        ct = SlidesContentTree(
+            deck_title="Code MD",
+            slides=[Slide(
+                id="s1", slide_type="code", title="Code",
+                elements=[SlideElement(
+                    id="e1", type="code",
+                    content="x = a ** 2  # **not bold**",
+                )],
+                speaker_notes="Notes.",
+            )],
+        )
+        theme = get_theme()
+        output = tmp_path / "md_code.pptx"
+        export_to_pptx(ct, theme, output)
+        prs = Presentation(str(output))
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if not shape.has_text_frame:
+                    continue
+                if "a ** 2" in shape.text_frame.text:
+                    assert "**not bold**" in shape.text_frame.text
+                    return
+        pytest.fail("Code slide should preserve literal ** markers")

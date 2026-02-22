@@ -185,9 +185,9 @@ function ThemePickerDialog({
                                                     e.stopPropagation();
                                                     handleExpandVariants(theme.id);
                                                 }}
-                                                className="text-[10px] text-primary/70 hover:text-primary transition-colors flex items-center gap-0.5"
+                                                className="text-[11px] bg-amber-100 text-amber-700 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-400 dark:border-amber-500/30 rounded-full px-2 py-0.5 hover:bg-amber-200 dark:hover:bg-amber-500/30 transition-colors flex items-center gap-0.5"
                                             >
-                                                Variants
+                                                6 Variants
                                                 <ChevronDown className={cn(
                                                     "w-3 h-3 transition-transform",
                                                     expandedBase === theme.id && "rotate-180"

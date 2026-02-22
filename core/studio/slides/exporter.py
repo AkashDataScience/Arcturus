@@ -1,5 +1,6 @@
 """PPTX renderer for Forge slides — programmatic shapes, no templates."""
 
+import re
 from pathlib import Path
 
 from pptx import Presentation
@@ -158,13 +159,67 @@ def _scaled_font_size(base_size, font_name):
     return Pt(int(base_size.pt * scale + 0.5))
 
 
+_MD_INLINE_RE = re.compile(
+    r'\*\*\*(?!\s)(.+?)(?<!\s)\*\*\*'   # ***bold+italic*** (no inner spaces at delimiters)
+    r'|\*\*(?!\s)(.+?)(?<!\s)\*\*'       # **bold**
+    r'|\*(?!\s)(.+?)(?<!\s)\*'           # *italic*
+)
+
+
+def _parse_markdown_runs(text: str) -> list[tuple[str, bool, bool]]:
+    """Parse markdown inline formatting into (text, bold, italic) segments."""
+    if not text:
+        return [("", False, False)]
+    segments: list[tuple[str, bool, bool]] = []
+    last_end = 0
+    for m in _MD_INLINE_RE.finditer(text):
+        # Plain text before this match
+        if m.start() > last_end:
+            segments.append((text[last_end:m.start()], False, False))
+        if m.group(1) is not None:       # ***bold+italic***
+            segments.append((m.group(1), True, True))
+        elif m.group(2) is not None:     # **bold**
+            segments.append((m.group(2), True, False))
+        elif m.group(3) is not None:     # *italic*
+            segments.append((m.group(3), False, True))
+        last_end = m.end()
+    # Trailing plain text (or entire string if no matches)
+    if last_end < len(text):
+        segments.append((text[last_end:], False, False))
+    return segments or [("", False, False)]
+
+
+def _apply_markdown_runs(paragraph, text, *, font_name, font_size, font_color, bold=False):
+    """Replace paragraph text with per-run markdown formatting."""
+    if isinstance(font_color, str):
+        font_color = RGBColor.from_string(font_color.lstrip("#"))
+
+    segments = _parse_markdown_runs(str(text))
+
+    # Clear existing text
+    paragraph.clear()
+
+    # Set paragraph-level font size for validator compatibility
+    paragraph.font.size = font_size
+
+    for seg_text, seg_bold, seg_italic in segments:
+        run = paragraph.add_run()
+        run.text = seg_text
+        run.font.name = font_name
+        run.font.size = font_size
+        run.font.color.rgb = font_color
+        run.font.bold = bold or seg_bold
+        run.font.italic = seg_italic
+
+
 def _add_text_box(slide, text, left, top, width, height,
                   font_name="Calibri", font_size=None,
                   font_color="#000000", alignment=PP_ALIGN.LEFT,
-                  bold=False):
+                  bold=False, parse_markdown=True):
     """Add a text box shape with styled text and design token margins."""
     if font_size is None:
         font_size = _DESIGN_TOKENS["body_size"]
+    scaled_size = _scaled_font_size(font_size, font_name)
     txBox = slide.shapes.add_textbox(left, top, width, height)
     tf = txBox.text_frame
     tf.word_wrap = True
@@ -176,19 +231,23 @@ def _add_text_box(slide, text, left, top, width, height,
     tf.margin_bottom = _DESIGN_TOKENS["margin_bottom"]
 
     p = tf.paragraphs[0]
-    p.text = str(text)
-    p.font.name = font_name
-    p.font.size = _scaled_font_size(font_size, font_name)
-    p.font.bold = bold
     p.alignment = alignment
-
-    # Apply line spacing
     p.line_spacing = _DESIGN_TOKENS["line_spacing"]
     p.space_after = _DESIGN_TOKENS["para_space_after"]
 
-    if isinstance(font_color, str):
-        font_color = RGBColor.from_string(font_color.lstrip("#"))
-    p.font.color.rgb = font_color
+    if parse_markdown:
+        _apply_markdown_runs(
+            p, text, font_name=font_name, font_size=scaled_size,
+            font_color=font_color, bold=bold,
+        )
+    else:
+        p.text = str(text)
+        p.font.name = font_name
+        p.font.size = scaled_size
+        p.font.bold = bold
+        if isinstance(font_color, str):
+            font_color = RGBColor.from_string(font_color.lstrip("#"))
+        p.font.color.rgb = font_color
 
 
 def _add_bullet_list(slide, items, left, top, width, height,
@@ -197,6 +256,12 @@ def _add_bullet_list(slide, items, left, top, width, height,
     """Add a text box with bullet-point paragraphs."""
     if font_size is None:
         font_size = _DESIGN_TOKENS["body_small_size"]
+    scaled_size = _scaled_font_size(font_size, font_name)
+    if isinstance(font_color, str):
+        resolved_color = RGBColor.from_string(font_color.lstrip("#"))
+    else:
+        resolved_color = font_color
+
     txBox = slide.shapes.add_textbox(left, top, width, height)
     tf = txBox.text_frame
     tf.word_wrap = True
@@ -212,13 +277,12 @@ def _add_bullet_list(slide, items, left, top, width, height,
             p = tf.paragraphs[0]
         else:
             p = tf.add_paragraph()
-        p.text = f"\u2022 {item}"
-        p.font.name = font_name
-        p.font.size = _scaled_font_size(font_size, font_name)
-        if isinstance(font_color, str):
-            p.font.color.rgb = RGBColor.from_string(font_color.lstrip("#"))
         p.space_after = _DESIGN_TOKENS["bullet_space_after"]
         p.line_spacing = _DESIGN_TOKENS["line_spacing"]
+        _apply_markdown_runs(
+            p, f"\u2022 {item}", font_name=font_name,
+            font_size=scaled_size, font_color=resolved_color,
+        )
 
 
 def _find_element(slide_data, element_type):
@@ -705,7 +769,7 @@ def _render_code(slide, slide_data, theme):
                       left=Inches(1.0), top=BODY_TOP,
                       width=Inches(11.333), height=BODY_HEIGHT,
                       font_name="Courier New", font_size=_DESIGN_TOKENS["code_size"],
-                      font_color=theme.colors.text)
+                      font_color=theme.colors.text, parse_markdown=False)
 
     _set_slide_background(slide, theme)
 
