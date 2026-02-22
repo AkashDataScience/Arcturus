@@ -1,13 +1,16 @@
-import yaml
 import json
+import os
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from core.model_manager import ModelManager
-from core.json_parser import parse_llm_json
-from core.utils import log_step, log_error
+
+import yaml
 from PIL import Image
-from datetime import datetime
-import os
+
+from core.json_parser import parse_llm_json
+from core.model_manager import ModelManager
+from core.utils import log_error, log_step
+
 
 class AgentRunner:
     def __init__(self, multi_mcp):
@@ -177,6 +180,7 @@ class AgentRunner:
             if agent_type == "PlannerAgent":
                 try:
                     from memory.episodic import search_episodes
+
                     # Handle different input key possibilities
                     query = input_data.get("task") or input_data.get("original_query") or ""
                     if query:
@@ -266,7 +270,6 @@ class AgentRunner:
 
             # HIERARCHY ENFORCEMENT
             # This is a simplified way to represent the hierarchy for the model.
-            # In a more advanced system, this might involve different API calls or message roles.
             full_prompt = (
                 f"--- SYSTEM INSTRUCTIONS (HIGHEST PRIORITY) ---\n{system_prompt}\n\n"
                 f"--- AVAILABLE TOOLS ---\n{tool_prompt}\n\n"
