@@ -253,6 +253,57 @@ class MessageEnvelope:
             metadata={"guild_id": guild_id, "channel_id": channel_id, **kwargs},
         )
 
+    @classmethod
+    def from_whatsapp(
+        cls,
+        phone_number: str,
+        contact_name: str,
+        text: str,
+        message_id: str,
+        is_group: bool = False,
+        group_id: Optional[str] = None,
+        is_bot: bool = False,
+        **kwargs,
+    ) -> "MessageEnvelope":
+        """Create a MessageEnvelope from a WhatsApp message (via Baileys bridge).
+
+        For DMs, the phone number is both the sender_id and the conversation_id.
+        For group messages, the group JID becomes the conversation_id so all
+        group members share one agent session.
+
+        Args:
+            phone_number: Sender's normalized phone number (digits only, no @suffix).
+            contact_name: Sender's WhatsApp display name (push name).
+            text: Message text (plain UTF-8).
+            message_id: Baileys message key ID (globally unique).
+            is_group: True if the message came from a group chat.
+            group_id: Group JID (e.g. ``"123456789@g.us"``) when is_group=True.
+            is_bot: Whether the sender is the bot (bridge filters fromMe, always False).
+            **kwargs: Additional metadata to store.
+
+        Returns:
+            MessageEnvelope instance.
+        """
+        # DM    → conversation_id = phone_number (one session per contact)
+        # Group → conversation_id = group_id     (one session per group)
+        conversation_id = group_id if is_group and group_id else phone_number
+        return cls(
+            channel="whatsapp",
+            channel_message_id=str(message_id),
+            sender_id=phone_number,
+            sender_name=contact_name,
+            content=cls.normalize_text(text),
+            thread_id=conversation_id,
+            conversation_id=conversation_id,
+            sender_is_bot=is_bot,
+            metadata={
+                "phone_number": phone_number,
+                "is_group": is_group,
+                "group_id": group_id,
+                **kwargs,
+            },
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert envelope to dictionary for serialization."""
         return {

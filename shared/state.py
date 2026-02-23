@@ -121,6 +121,7 @@ def get_message_bus():
         from channels.webchat import WebChatAdapter
         from channels.slack import SlackAdapter
         from channels.discord import DiscordAdapter
+        from channels.whatsapp import WhatsAppAdapter
         formatter = MessageFormatter()
         group_activation = _load_group_activation()
         router = MessageRouter(
@@ -136,6 +137,7 @@ def get_message_bus():
                 "webchat": WebChatAdapter(),
                 "slack": SlackAdapter(),
                 "discord": DiscordAdapter(),
+                "whatsapp": WhatsAppAdapter(),
             },
         )
     return _message_bus

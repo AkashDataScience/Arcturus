@@ -290,3 +290,106 @@ async def discord_events(request: Request) -> Dict[str, Any]:
             await bus.roundtrip(envelope)
 
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp (Baileys bridge inbound)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/whatsapp/inbound")
+async def whatsapp_challenge(request: Request) -> Dict[str, Any]:
+    """WhatsApp hub.challenge handshake (GET).
+
+    When the Baileys bridge (or an external system) verifies the webhook URL,
+    it can send:
+      GET /api/nexus/whatsapp/inbound?hub.mode=subscribe&hub.challenge=TOKEN&hub.verify_token=SECRET
+
+    We echo back the challenge token to confirm ownership.  This mirrors the
+    WhatsApp Cloud API verification pattern, making the endpoint compatible
+    with future migration away from Baileys.
+
+    Query params:
+        hub.mode:         Must be ``"subscribe"``.
+        hub.challenge:    Arbitrary token to echo back.
+        hub.verify_token: Must match ``WHATSAPP_BRIDGE_SECRET`` (or be empty in dev mode).
+    """
+    mode = request.query_params.get("hub.mode", "")
+    challenge = request.query_params.get("hub.challenge", "")
+    verify_token = request.query_params.get("hub.verify_token", "")
+
+    bus = _get_bus()
+    adapter = bus.adapters.get("whatsapp")
+    expected_secret: str = getattr(adapter, "bridge_secret", "") if adapter else ""
+
+    # In dev mode (no secret), accept any verify_token.
+    # In production, verify_token must match the bridge secret.
+    if expected_secret and verify_token != expected_secret:
+        raise HTTPException(status_code=403, detail="hub.verify_token mismatch")
+
+    if mode == "subscribe" and challenge:
+        return {"hub.challenge": challenge}
+
+    raise HTTPException(status_code=400, detail="Invalid hub.mode or missing hub.challenge")
+
+
+@router.post("/whatsapp/inbound")
+async def whatsapp_inbound(request: Request) -> Dict[str, Any]:
+    """Receive an inbound WhatsApp message from the Baileys bridge.
+
+    The bridge POSTs a JSON payload with these fields:
+        message_id    (str)  — Baileys key.id (globally unique)
+        phone_number  (str)  — sender's normalized phone number (digits only)
+        contact_name  (str)  — sender's WhatsApp push name
+        text          (str)  — message text
+        is_group      (bool) — True for group chat messages
+        group_id      (str|null) — group JID when is_group=True
+        timestamp     (str)  — ISO 8601
+
+    The bridge sets ``X-WA-Secret`` header (HMAC-SHA256 over raw JSON body).
+    Signature verification is skipped when ``WHATSAPP_BRIDGE_SECRET`` is empty.
+
+    ``fromMe=True`` messages are filtered at the bridge before being forwarded;
+    this endpoint also guards against empty text as a defence-in-depth measure.
+    """
+    body = await request.body()
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    # 1. Optional HMAC-SHA256 signature verification.
+    bus = _get_bus()
+    adapter = bus.adapters.get("whatsapp")
+    bridge_secret: str = getattr(adapter, "bridge_secret", "") if adapter else ""
+    if bridge_secret:
+        sig = request.headers.get("X-WA-Secret", "")
+        from channels.whatsapp import WhatsAppAdapter as _WhatsAppAdapter
+        if not _WhatsAppAdapter.verify_signature(body, sig, bridge_secret):
+            raise HTTPException(status_code=403, detail="Invalid WhatsApp bridge signature")
+
+    # 2. Extract fields.
+    phone_number = payload.get("phone_number", "")
+    contact_name = payload.get("contact_name", phone_number)
+    text = payload.get("text", "")
+    message_id = payload.get("message_id") or str(uuid.uuid4())
+    is_group = bool(payload.get("is_group", False))
+    group_id = payload.get("group_id")
+
+    # 3. Guard: skip empty text (also catches any fromMe slip-through).
+    if not text:
+        return {"ok": True, "skipped": True, "reason": "empty_text"}
+
+    # 4. Build envelope and roundtrip through the bus.
+    envelope = MessageEnvelope.from_whatsapp(
+        phone_number=phone_number,
+        contact_name=contact_name,
+        text=text,
+        message_id=message_id,
+        is_group=is_group,
+        group_id=group_id,
+    )
+    await bus.roundtrip(envelope)
+
+    # Bridge expects a simple 200 OK acknowledgement.
+    return {"ok": True}

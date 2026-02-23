@@ -35,6 +35,7 @@ class MessageFormatter:
         "slack": "_format_slack",
         "discord": "_format_discord",
         "webchat": "_format_webchat",
+        "whatsapp": "_format_plain",  # WhatsApp renders *bold*/_italic_ natively
     }
 
     def format(self, text: str, channel: str, **kwargs) -> str:

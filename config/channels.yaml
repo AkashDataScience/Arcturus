@@ -54,6 +54,22 @@ channels:
       max_retries: 3
       retry_backoff_seconds: 1.0
 
+  # WhatsApp — via Baileys Node.js bridge (whatsapp_bridge/)
+  # The bridge must be started separately: cd whatsapp_bridge && npm start
+  whatsapp:
+    enabled: true
+    # URL of the local Baileys bridge HTTP server
+    bridge_url_env: WHATSAPP_BRIDGE_URL          # default: http://localhost:3001
+    # Shared HMAC-SHA256 secret for bridge ↔ FastAPI authentication
+    bridge_secret_env: WHATSAPP_BRIDGE_SECRET    # optional but strongly recommended
+    # WhatsApp renders *bold*/_italic_ natively; plain formatter is correct
+    parse_mode: plain
+    policies:
+      group_activation: mention-only
+      dm_allowlist: []
+      max_retries: 3
+      retry_backoff_seconds: 1.0
+
 # Global routing defaults (overridden per channel above)
 routing:
   default_queue_mode: serial   # "serial" | "parallel"
