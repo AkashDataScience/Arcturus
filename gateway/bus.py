@@ -29,11 +29,13 @@ Usage::
     result = await bus.roundtrip(envelope)
 """
 
+import asyncio
 import logging
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Set
 
 from channels.base import ChannelAdapter
+from core.loop import retry_with_backoff
 from gateway.envelope import MessageEnvelope
 from gateway.formatter import MessageFormatter
 from gateway.router import MessageRouter
@@ -93,6 +95,7 @@ class MessageBus:
         self.router = router
         self.formatter = formatter
         self.adapters = adapters
+        self._seen_hashes: Set[str] = set()
 
     async def ingest(self, envelope: MessageEnvelope) -> BusResult:
         """Route an inbound envelope to the appropriate agent.
@@ -109,6 +112,21 @@ class MessageBus:
             envelope.sender_id,
             envelope.message_hash,
         )
+        # Idempotency: skip envelopes we have already processed.
+        if envelope.message_hash and envelope.message_hash in self._seen_hashes:
+            logger.info(
+                "Bus.ingest: duplicate message_hash=%s — skipped", envelope.message_hash
+            )
+            return BusResult(
+                success=True,
+                operation="ingest",
+                channel=envelope.channel,
+                message_id=envelope.channel_message_id,
+                error="duplicate",
+            )
+        if envelope.message_hash:
+            self._seen_hashes.add(envelope.message_hash)
+
         try:
             routing = await self.router.route(envelope)
             return BusResult(
@@ -133,6 +151,8 @@ class MessageBus:
         channel: str,
         recipient_id: str,
         text: str,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
         **kwargs,
     ) -> BusResult:
         """Format *text* and send it to *recipient_id* on *channel*.
@@ -167,7 +187,15 @@ class MessageBus:
             )
 
         try:
-            send_result = await adapter.send_message(recipient_id, formatted, **kwargs)
+            async def _send():
+                return await adapter.send_message(recipient_id, formatted, **kwargs)
+
+            send_result = await retry_with_backoff(
+                _send,
+                max_retries=max_retries,
+                base_delay=base_delay,
+                retryable_errors=(asyncio.TimeoutError, ConnectionError, TimeoutError),
+            )
             return BusResult(
                 success=send_result.get("success", True),
                 operation="deliver",

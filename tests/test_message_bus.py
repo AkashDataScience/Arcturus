@@ -196,3 +196,182 @@ def test_bus_deduplication_via_message_hash():
     )
     # Different content → different hash
     assert env.message_hash != env2.message_hash
+
+
+def test_bus_dedup_skips_duplicate_hash():
+    """Ingesting the same envelope twice should short-circuit on the second call."""
+
+    async def _run():
+        bus, _, _ = _make_bus()
+        envelope = _telegram_envelope()
+        r1 = await bus.ingest(envelope)
+        assert r1.success is True
+        assert r1.error != "duplicate"
+        msg_num_first = r1.agent_response["message_number"]
+
+        # Second ingest of the exact same envelope (same message_hash)
+        r2 = await bus.ingest(envelope)
+        assert r2.success is True
+        assert r2.error == "duplicate"
+        # Router was NOT called a second time — message_number unchanged
+        assert r2.agent_response is None  # dedup short-circuits before routing
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# Retry tests
+# ---------------------------------------------------------------------------
+
+
+class _FailOnceAdapter:
+    """Adapter that raises ConnectionError on first call, succeeds on second."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def send_message(self, recipient_id, content, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            raise ConnectionError("transient failure")
+        return {"message_id": "recovered", "success": True}
+
+    async def initialize(self):
+        pass
+
+    async def shutdown(self):
+        pass
+
+
+class _AlwaysFailAdapter:
+    """Adapter that always raises ConnectionError."""
+
+    async def send_message(self, recipient_id, content, **kwargs):
+        raise ConnectionError("permanent failure")
+
+    async def initialize(self):
+        pass
+
+    async def shutdown(self):
+        pass
+
+
+def test_bus_deliver_retries_on_transient_error():
+    """deliver() should retry a transient ConnectionError and succeed on second attempt."""
+
+    async def _run():
+        fail_once = _FailOnceAdapter()
+        formatter = MessageFormatter()
+        router = MessageRouter(agent_factory=create_mock_agent, formatter=formatter)
+        bus = MessageBus(
+            router=router,
+            formatter=formatter,
+            adapters={"fail": fail_once},
+        )
+        result = await bus.deliver("fail", "r1", "hello", max_retries=2, base_delay=0)
+        assert result.success is True
+        assert fail_once.calls == 2  # first failed, second succeeded
+
+    asyncio.run(_run())
+
+
+def test_bus_deliver_fails_after_max_retries():
+    """deliver() should return success=False after all retries are exhausted."""
+
+    async def _run():
+        always_fail = _AlwaysFailAdapter()
+        formatter = MessageFormatter()
+        router = MessageRouter(agent_factory=create_mock_agent, formatter=formatter)
+        bus = MessageBus(
+            router=router,
+            formatter=formatter,
+            adapters={"fail": always_fail},
+        )
+        result = await bus.deliver("fail", "r1", "hello", max_retries=2, base_delay=0)
+        assert result.success is False
+        assert result.error is not None
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# HC5: media payload roundtrip — three channels, text + attachment
+# ---------------------------------------------------------------------------
+
+
+def test_media_payload_survives_roundtrip_three_channels():
+    """HC5: Envelopes carrying a MediaAttachment must roundtrip through ingest
+    on all three required channels (telegram, webchat, slack) without dropping
+    the attachment.  The bus ingests each envelope and returns success; the
+    attachment fields are verified to be intact after construction.
+    """
+    from gateway.envelope import MediaAttachment
+
+    attachment = MediaAttachment(
+        media_type="image",
+        url="https://example.com/photo.jpg",
+        filename="photo.jpg",
+        size_bytes=102400,
+        mime_type="image/jpeg",
+    )
+
+    # --- Telegram ---
+    tg_env = MessageEnvelope.from_telegram(
+        chat_id="12345678",
+        sender_id="42",
+        sender_name="Alice",
+        text="Check this image",
+        message_id="msg-media-tg",
+    )
+    tg_env.attachments = [attachment]
+    tg_env.content_type = "mixed"
+
+    # --- WebChat ---
+    wc_env = MessageEnvelope.from_webchat(
+        session_id="sess-media",
+        sender_id="u1",
+        sender_name="Bob",
+        text="Sharing a file",
+        message_id="msg-media-wc",
+    )
+    wc_env.attachments = [attachment]
+    wc_env.content_type = "mixed"
+
+    # --- Slack ---
+    sl_env = MessageEnvelope.from_slack(
+        channel_id="C04KYFS5DV2",
+        sender_id="U999",
+        sender_name="Carol",
+        text="Here is the image",
+        message_id="1700000099.000001",
+    )
+    sl_env.attachments = [attachment]
+    sl_env.content_type = "mixed"
+
+    async def _run():
+        slack_adapter = _FakeAdapter("slack")
+        formatter = MessageFormatter()
+        router = MessageRouter(agent_factory=create_mock_agent, formatter=formatter)
+        bus = MessageBus(
+            router=router,
+            formatter=formatter,
+            adapters={
+                "telegram": _FakeAdapter("telegram"),
+                "webchat": _FakeAdapter("webchat"),
+                "slack": slack_adapter,
+            },
+        )
+        for env in [tg_env, wc_env, sl_env]:
+            result = await bus.ingest(env)
+            assert result.success is True, f"ingest failed for {env.channel}: {result.error}"
+
+    asyncio.run(_run())
+
+    # Verify attachment fields are intact on all three envelopes (no mutation by bus)
+    for env in [tg_env, wc_env, sl_env]:
+        assert len(env.attachments) == 1, f"{env.channel}: attachment list was cleared"
+        att = env.attachments[0]
+        assert att.media_type == "image"
+        assert att.url == "https://example.com/photo.jpg"
+        assert att.mime_type == "image/jpeg"
+        assert att.size_bytes == 102400

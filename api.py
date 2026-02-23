@@ -8,6 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 
+# Load .env before anything else so env vars are available to all modules.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
+
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 

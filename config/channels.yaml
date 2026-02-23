@@ -31,9 +31,9 @@ channels:
       max_retries: 2
       retry_backoff_seconds: 0.5
 
-  # Slack — not yet wired (Week 2)
+  # Slack — wired in Week 2 (SlackAdapter in channels/slack.py)
   slack:
-    enabled: false
+    enabled: true
     token_env: SLACK_BOT_TOKEN
     signing_secret_env: SLACK_SIGNING_SECRET
     parse_mode: mrkdwn
