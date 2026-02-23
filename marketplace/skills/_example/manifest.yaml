@@ -1,0 +1,17 @@
+name: example_skill
+version: 1.0.0
+description: A simple example skill to test the manifest loader
+author: You
+category: general
+permissions: []
+dependencies: []
+skill_dependencies: []
+intent_triggers:
+  - hello
+  - example
+tools:
+  - name: say_hello
+    description: Returns a greeting message
+    module: tools.greeter
+    function: say_hello
+checksum: ""
