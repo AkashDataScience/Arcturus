@@ -28,7 +28,7 @@
     "overrides": {
       "IDEAgent": {
         "model_provider": "gemini",
-        "model": "gemini-3.0-flash"
+        "model": "gemini-2.5-flash"
       }
     },
     "max_steps": 3,

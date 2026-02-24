@@ -12,7 +12,7 @@ const CanvasHost: React.FC<CanvasHostProps> = ({ surfaceId }) => {
     const [dataModel, setDataModel] = useState<any>({});
     const [isSandbox, setIsSandbox] = useState(false);
     const [htmlContent, setHtmlContent] = useState('');
-
+    const [htmlTitle, setHtmlTitle] = useState<string | null>(null);
     // WebSocket connection to the backend
     const socketUrl = `ws://localhost:8000/api/canvas/ws/${surfaceId}`;
 
@@ -41,6 +41,11 @@ const CanvasHost: React.FC<CanvasHostProps> = ({ surfaceId }) => {
                 case 'evalJS':
                     // If we are in sandbox mode, we'd forward this. 
                     // For widget mode, we might handle it differently.
+                    break;
+                case 'updateHtml':
+                    setHtmlContent(msg.html ?? '');
+                    setHtmlTitle(msg.title ?? null);
+                    setIsSandbox(true);
                     break;
                 default:
                     console.warn('Unknown message type:', msg.type);
@@ -92,6 +97,7 @@ const CanvasHost: React.FC<CanvasHostProps> = ({ surfaceId }) => {
                     <div className={`w-3 h-3 rounded-full ${readyState === ReadyState.OPEN ? 'bg-green-500' : 'bg-red-500'}`} />
                     <span className="text-xs font-mono uppercase tracking-wider text-gray-400">
                         Surface: {surfaceId}
+                        {isSandbox && htmlTitle ? ` - ${htmlTitle}` : ''}
                     </span>
                 </div>
                 <div className="flex space-x-1">
