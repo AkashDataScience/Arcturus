@@ -8,6 +8,7 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
+from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 import hashlib
@@ -615,6 +616,126 @@ def _add_decorative_accent(slide, theme, slide_index):
         rule.line.fill.background()
 
 
+# === Background Geometric Graphics ===
+
+# Shape configs for title, closing, and section divider slides.
+# Each entry: shape type, position (left, top, width, height in Inches),
+# color_key (theme attribute), alpha_pct (0–100 fill opacity).
+_BG_GRAPHICS = {
+    "title": [
+        # Large circle bottom-right — anchors the corner
+        {"shape": "circle", "left": 10.2, "top": 4.5, "w": 4.0, "h": 4.0,
+         "color_key": "primary", "alpha_pct": 20},
+        # Medium circle top-left — balances the composition
+        {"shape": "circle", "left": -1.0, "top": -0.8, "w": 2.8, "h": 2.8,
+         "color_key": "accent", "alpha_pct": 18},
+        # Small accent dot upper-right
+        {"shape": "circle", "left": 11.8, "top": 0.4, "w": 1.0, "h": 1.0,
+         "color_key": "accent", "alpha_pct": 25},
+        # Ring bottom-left — open shape for contrast
+        {"shape": "ring", "left": 0.2, "top": 5.2, "w": 2.2, "h": 2.2,
+         "color_key": "accent", "alpha_pct": 15},
+    ],
+    "closing": [
+        # Large circle top-right (mirrored from title)
+        {"shape": "circle", "left": 9.8, "top": -1.5, "w": 4.0, "h": 4.0,
+         "color_key": "primary", "alpha_pct": 20},
+        # Medium circle bottom-left
+        {"shape": "circle", "left": -0.8, "top": 5.0, "w": 2.8, "h": 2.8,
+         "color_key": "accent", "alpha_pct": 18},
+        # Small accent dot lower-left
+        {"shape": "circle", "left": 1.2, "top": 6.0, "w": 1.0, "h": 1.0,
+         "color_key": "accent", "alpha_pct": 25},
+        # Ring top-left
+        {"shape": "ring", "left": -0.2, "top": -0.5, "w": 2.2, "h": 2.2,
+         "color_key": "accent", "alpha_pct": 15},
+    ],
+    "section": [
+        # Circle right side
+        {"shape": "circle", "left": 11.0, "top": 2.2, "w": 3.0, "h": 3.0,
+         "color_key": "primary", "alpha_pct": 16},
+        # Ring left side
+        {"shape": "ring", "left": -0.6, "top": 2.8, "w": 2.2, "h": 2.2,
+         "color_key": "accent", "alpha_pct": 12},
+    ],
+}
+
+
+def _apply_shape_alpha(shape, alpha_pct):
+    """Set fill transparency on a solid-filled shape via XML alpha element."""
+    sp_pr = shape._element.spPr
+    solid_fill = sp_pr.find(qn("a:solidFill"))
+    if solid_fill is not None:
+        srgb = solid_fill.find(qn("a:srgbClr"))
+        if srgb is not None:
+            # Remove existing alpha if any
+            for old in srgb.findall(qn("a:alpha")):
+                srgb.remove(old)
+            alpha_el = srgb.makeelement(
+                qn("a:alpha"), {"val": str(alpha_pct * 1000)}
+            )
+            srgb.append(alpha_el)
+
+
+def _apply_line_alpha(shape, alpha_pct):
+    """Set stroke transparency on a shape's line via XML alpha element."""
+    sp_pr = shape._element.spPr
+    ln = sp_pr.find(qn("a:ln"))
+    if ln is not None:
+        solid_fill = ln.find(qn("a:solidFill"))
+        if solid_fill is not None:
+            srgb = solid_fill.find(qn("a:srgbClr"))
+            if srgb is not None:
+                for old in srgb.findall(qn("a:alpha")):
+                    srgb.remove(old)
+                alpha_el = srgb.makeelement(
+                    qn("a:alpha"), {"val": str(alpha_pct * 1000)}
+                )
+                srgb.append(alpha_el)
+
+
+def _is_dark_background(theme):
+    """Check if the theme uses a dark background (luminance < 40%)."""
+    bg = theme.colors.background.lstrip("#")
+    r, g, b = int(bg[0:2], 16), int(bg[2:4], 16), int(bg[4:6], 16)
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return luminance < 0.4
+
+
+def _add_bg_graphics(slide, theme, variant):
+    """Add subtle translucent geometric shapes behind slide content."""
+    bg_hex = theme.colors.background
+    dark = _is_dark_background(theme)
+    # Dark themes: use the theme color directly (no blend toward dark bg).
+    # Light themes: blend partway toward background so shapes stay soft.
+    blend_ratio = 0.85 if dark else 0.50
+
+    for desc in _BG_GRAPHICS.get(variant, []):
+        color_hex = getattr(theme.colors, desc["color_key"], theme.colors.primary)
+        blended = _blend_color(color_hex, bg_hex, blend_ratio)
+        blended_clean = blended.lstrip("#")
+
+        left = Inches(desc["left"])
+        top = Inches(desc["top"])
+        width = Inches(desc["w"])
+        height = Inches(desc["h"])
+        shape_type = desc["shape"]
+
+        if shape_type == "circle":
+            shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, left, top, width, height)
+            shp.fill.solid()
+            shp.fill.fore_color.rgb = RGBColor.from_string(blended_clean)
+            shp.line.fill.background()
+            _apply_shape_alpha(shp, desc["alpha_pct"])
+
+        elif shape_type == "ring":
+            shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, left, top, width, height)
+            shp.fill.background()  # No fill — ring only
+            shp.line.color.rgb = RGBColor.from_string(blended_clean)
+            shp.line.width = Pt(3.5)
+            _apply_line_alpha(shp, desc["alpha_pct"])
+
+
 # === Card Layouts ===
 
 def _add_card(slide, *, left, top, width, height, theme, color_key="primary"):
@@ -631,7 +752,6 @@ def _add_card(slide, *, left, top, width, height, theme, color_key="primary"):
     card.line.fill.background()  # No visible border
 
     # Soft drop shadow via XML
-    from pptx.oxml.ns import qn
     sp_pr = card._element.spPr
     effect_lst = sp_pr.makeelement(qn("a:effectLst"), {})
     outer_shdw = effect_lst.makeelement(qn("a:outerShdw"), {
@@ -947,6 +1067,12 @@ def _render_title(slide, slide_data, theme, **kwargs):
         _set_slide_background(slide, theme)
         title_color = theme.colors.primary
         subtitle_color = theme.colors.text_light
+
+    # Background geometric graphics (before text for z-order)
+    slide_index = kwargs.get("slide_index", 0)
+    total_slides = kwargs.get("total_slides", 1)
+    is_closing = slide_index == total_slides - 1 and total_slides > 1
+    _add_bg_graphics(slide, theme, variant="closing" if is_closing else "title")
 
     # Check for metadata-driven enhancements
     metadata = getattr(slide_data, "metadata", None) or {}
@@ -1809,7 +1935,6 @@ def _render_image_full(slide, slide_data, theme, **kwargs):
     overlay.line.fill.background()
 
     # Configure gradient stops via XML for precise alpha control
-    from pptx.oxml.ns import qn
     sp_pr = overlay._element.spPr
     grad_fill = sp_pr.find(qn("a:gradFill"))
     if grad_fill is not None:
@@ -1877,6 +2002,9 @@ def _render_section_divider(slide, slide_data, theme, **kwargs):
         _set_slide_background(slide, theme)
         title_color = theme.colors.primary
         subtitle_color = theme.colors.text_light
+
+    # Background geometric graphics (before text for z-order)
+    _add_bg_graphics(slide, theme, variant="section")
 
     # Large section number in accent color
     section_num = str(section_number)

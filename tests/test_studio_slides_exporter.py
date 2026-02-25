@@ -1133,6 +1133,124 @@ class TestEnhancedComparison:
         assert "Expert Panel" in all_text, "Attribution should be rendered"
 
 
+# === Background Geometric Graphics Tests ===
+
+class TestBackgroundGraphics:
+    """Tests for translucent geometric shapes on title, closing & section divider slides."""
+
+    def _make_tree(self, slides):
+        return SlidesContentTree(deck_title="BG Test", slides=slides)
+
+    def test_title_slide_has_bg_ovals(self, tmp_path):
+        """Title slide should contain oval shapes from background graphics."""
+        ct = self._make_tree([
+            Slide(id="s1", slide_type="title", title="Hello",
+                  elements=[SlideElement(id="e1", type="title", content="Hello")]),
+            Slide(id="s2", slide_type="content", title="Body",
+                  elements=[SlideElement(id="e2", type="body", content="text")]),
+        ])
+        theme = get_theme()
+        out = tmp_path / "bg_title.pptx"
+        export_to_pptx(ct, theme, out)
+        prs = Presentation(str(out))
+        title_slide = prs.slides[0]
+        ovals = [s for s in title_slide.shapes if s.name.startswith("Oval")]
+        assert len(ovals) >= 3, f"Expected >=3 ovals on title slide, got {len(ovals)}"
+
+    def test_closing_slide_has_bg_ovals(self, tmp_path):
+        """Closing slide (last title slide) should get the 'closing' variant."""
+        ct = self._make_tree([
+            Slide(id="s1", slide_type="title", title="Open",
+                  elements=[SlideElement(id="e1", type="title", content="Open")]),
+            Slide(id="s2", slide_type="content", title="Body",
+                  elements=[SlideElement(id="e2", type="body", content="mid")]),
+            Slide(id="s3", slide_type="title", title="Close",
+                  elements=[SlideElement(id="e3", type="title", content="Close")]),
+        ])
+        theme = get_theme()
+        out = tmp_path / "bg_closing.pptx"
+        export_to_pptx(ct, theme, out)
+        prs = Presentation(str(out))
+        closing_slide = prs.slides[2]
+        ovals = [s for s in closing_slide.shapes if s.name.startswith("Oval")]
+        assert len(ovals) >= 3, f"Expected >=3 ovals on closing slide, got {len(ovals)}"
+
+    def test_section_divider_has_bg_graphics(self, tmp_path):
+        """Section divider should get the lighter 'section' variant."""
+        ct = self._make_tree([
+            Slide(id="s1", slide_type="title", title="Title",
+                  elements=[SlideElement(id="e1", type="title", content="Title")]),
+            Slide(id="s2", slide_type="section_divider", title="Part 1",
+                  elements=[SlideElement(id="e2", type="title", content="Part 1")]),
+            Slide(id="s3", slide_type="content", title="Body",
+                  elements=[SlideElement(id="e3", type="body", content="text")]),
+        ])
+        theme = get_theme()
+        out = tmp_path / "bg_section.pptx"
+        export_to_pptx(ct, theme, out)
+        prs = Presentation(str(out))
+        section_slide = prs.slides[1]
+        # Section variant has 2 shapes: 1 circle + 1 ring (both ovals)
+        ovals = [s for s in section_slide.shapes if s.name.startswith("Oval")]
+        assert len(ovals) >= 2, f"Expected >=2 ovals on section divider, got {len(ovals)}"
+
+    def test_bg_shapes_render_before_text(self, tmp_path):
+        """Background shapes should precede text boxes in z-order."""
+        ct = self._make_tree([
+            Slide(id="s1", slide_type="title", title="Z-Order Test",
+                  elements=[SlideElement(id="e1", type="title", content="Z-Order Test"),
+                            SlideElement(id="e2", type="subtitle", content="Sub")]),
+        ])
+        theme = get_theme()
+        out = tmp_path / "bg_zorder.pptx"
+        export_to_pptx(ct, theme, out)
+        prs = Presentation(str(out))
+        shapes = list(prs.slides[0].shapes)
+        # Find first text shape index
+        first_text_idx = next(
+            (i for i, s in enumerate(shapes) if s.has_text_frame and s.text_frame.text),
+            len(shapes),
+        )
+        # Find first non-text shape (bg graphic)
+        first_graphic_idx = next(
+            (i for i, s in enumerate(shapes) if not s.has_text_frame or not s.text_frame.text),
+            len(shapes),
+        )
+        assert first_graphic_idx < first_text_idx, \
+            "Background graphic shapes should appear before text in shape list"
+
+    def test_bg_graphics_all_themes_no_crash(self, tmp_path):
+        """Background graphics should render without error across diverse themes."""
+        ct = self._make_tree([
+            Slide(id="s1", slide_type="title", title="Theme Test",
+                  elements=[SlideElement(id="e1", type="title", content="Theme Test")]),
+            Slide(id="s2", slide_type="section_divider", title="Section",
+                  elements=[SlideElement(id="e2", type="title", content="Section")]),
+            Slide(id="s3", slide_type="title", title="End",
+                  elements=[SlideElement(id="e3", type="title", content="End")]),
+        ])
+        theme_ids = ["midnight", "corporate", "sunset", "forest", "ocean", "minimal"]
+        for tid in theme_ids:
+            theme = get_theme(tid)
+            out = tmp_path / f"bg_{tid}.pptx"
+            export_to_pptx(ct, theme, out)
+            assert out.exists(), f"Failed to generate PPTX for theme {tid}"
+
+    def test_single_slide_uses_title_variant(self, tmp_path):
+        """A 1-slide deck should use 'title' variant, not 'closing'."""
+        ct = self._make_tree([
+            Slide(id="s1", slide_type="title", title="Solo",
+                  elements=[SlideElement(id="e1", type="title", content="Solo")]),
+        ])
+        theme = get_theme()
+        out = tmp_path / "bg_solo.pptx"
+        export_to_pptx(ct, theme, out)
+        prs = Presentation(str(out))
+        # Just verify it renders without error and has shapes
+        shapes = list(prs.slides[0].shapes)
+        assert len(shapes) >= 3, "Single title slide should have bg graphics + text"
+
+
 # === Phase 8C: Prompt Tests ===
 
 class TestPromptUpdates:
