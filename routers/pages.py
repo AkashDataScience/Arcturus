@@ -26,6 +26,22 @@ async def _run_generate_job(job_id: str, req: GenerateRequest) -> None:
         page = await page_generator.generate_page(req.query, template=req.template, created_by="api")
         JOBS[job_id]["status"] = "done"
         JOBS[job_id]["page_id"] = page.get("id")
+        
+        # Store page metadata for list endpoints
+        page_id = page.get("id")
+        PAGES_META[page_id] = {
+            "title": page.get("title", "Untitled"),
+            "created_at": page.get("metadata", {}).get("created_at", "now"),
+            "updated_at": page.get("metadata", {}).get("created_at", "now"),
+            "query": page.get("query"),
+            "template": page.get("template"),
+            "owner_id": page.get("metadata", {}).get("created_by"),
+            "tags": [],
+            "folder_id": None,
+            "visibility": "private",
+            "deleted": False
+        }
+        
     except Exception as exc:  # keep broad to capture failures for the job tracker
         JOBS[job_id]["status"] = "failed"
         JOBS[job_id]["error"] = str(exc)
@@ -51,15 +67,6 @@ async def get_job_status(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
     return job
-
-
-@router.get("/{page_id}")
-async def get_page(page_id: str):
-    try:
-        page = page_generator.load_page(page_id)
-        return page
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="page not found")
 
 
 # --- Stubbed collection, folder, versioning, and collaboration endpoints ---
@@ -171,7 +178,7 @@ async def create_folder(req: CreateFolderRequest):
     return {"id": fid, "name": req.name}
 
 
-@router.get("/folders")
+@router.get("/all-folders")
 async def list_folders():
     """List all folders with page counts"""
     # Calculate page counts for each folder
@@ -181,6 +188,16 @@ async def list_folders():
         FOLDERS[folder_id]["page_count"] = count
     
     return {"folders": list(FOLDERS.values())}
+
+
+# Now parameterized routes after all specific routes
+@router.get("/{page_id}")
+async def get_page(page_id: str):
+    try:
+        page = page_generator.load_page(page_id)
+        return page
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="page not found")
 
 
 @router.get("/folders/{folder_id}")
@@ -223,22 +240,55 @@ async def update_folder(folder_id: str, req: CreateFolderRequest):
 
 
 @router.delete("/folders/{folder_id}")
-async def delete_folder(folder_id: str, move_pages_to: Optional[str] = None):
-    """Delete folder, optionally moving pages to another folder"""
+async def delete_folder(folder_id: str, move_pages_to: Optional[str] = None, force: Optional[bool] = False):
+    """Delete folder, handling pages appropriately"""
     folder = FOLDERS.get(folder_id)
     if not folder:
         return {"status": "deleted", "id": folder_id}  # Idempotent
     
-    # Handle pages in the folder
-    for page_id, page_meta in PAGES_META.items():
-        if page_meta.get("folder_id") == folder_id:
-            page_meta["folder_id"] = move_pages_to  # None means root level
+    # Count pages in this folder
+    pages_in_folder = [
+        page_id for page_id, page_meta in PAGES_META.items() 
+        if page_meta.get("folder_id") == folder_id and not page_meta.get("deleted")
+    ]
     
+    # If folder has pages and no move_pages_to specified and not force, require explicit action
+    if pages_in_folder and not move_pages_to and not force:
+        return {
+            "error": "folder_not_empty",
+            "message": f"Folder contains {len(pages_in_folder)} pages. Specify move_pages_to folder ID or use force=true to move to root",
+            "page_count": len(pages_in_folder),
+            "pages": pages_in_folder[:5],  # Show first 5 page IDs
+            "suggestions": {
+                "move_to_root": f"?force=true",
+                "move_to_folder": f"?move_pages_to=folder_id"
+            }
+        }
+    
+    # Validate target folder if specified
+    if move_pages_to and move_pages_to not in FOLDERS:
+        raise HTTPException(status_code=400, detail=f"Target folder {move_pages_to} not found")
+    
+    # Move pages to target folder (or root if None)
+    moved_count = 0
+    for page_id in pages_in_folder:
+        PAGES_META[page_id]["folder_id"] = move_pages_to
+        PAGES_META[page_id]["updated_at"] = "now"
+        moved_count += 1
+    
+    # Delete the folder
     del FOLDERS[folder_id]
+    
+    target_name = "root"
+    if move_pages_to and move_pages_to in FOLDERS:
+        target_name = FOLDERS[move_pages_to]["name"]
+    
     return {
         "status": "deleted", 
         "id": folder_id,
-        "pages_moved_to": move_pages_to or "root"
+        "pages_moved": moved_count,
+        "pages_moved_to": move_pages_to or "root",
+        "target_folder_name": target_name
     }
 
 

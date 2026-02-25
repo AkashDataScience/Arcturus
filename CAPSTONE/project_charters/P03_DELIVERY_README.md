@@ -4,15 +4,15 @@
 - Implemented a Phase‑1 scaffold for Spark pages delivering the following features and artifacts:
   - Canonical page JSON schema and example
   - Deterministic Oracle mock for development and CI
-  - Modular section-agent contracts (overview, detail, data, source)
-  - Minimal multi-agent orchestrator to compose structured pages
+  - Modular section-agent contracts (overview, detail, data, source, comparison)
+  - Enhanced multi-agent orchestrator to compose structured 5-section pages
   - File-based persistence for generated pages under `data/pages/`
   - HTTP endpoints to generate and retrieve pages (`routers/pages.py`)
 
 **Delivered artifacts:**
   - `content/schema.md` — canonical page JSON schema and example
   - `content/oracle_client.py` — deterministic Oracle mock for development/CI
-  - `content/section_agents/` — `overview_agent`, `detail_agent`, `data_agent`, `source_agent` (stubs)
+  - `content/section_agents/` — `overview_agent`, `detail_agent`, `data_agent`, `source_agent`, `comparison_agent`
   - `content/page_generator.py` — multi-agent orchestrator and persistence
   - `routers/pages.py` — API endpoints for page CRUD/generation
   - `data/pages/` — persisted generated page artifacts (file-based)
@@ -26,9 +26,14 @@
 
 ## 3. API And UI Changes
 - **New backend endpoints** (FastAPI):
-  - `POST /api/pages/generate` — Accepts `{ "query": string, "template": string? }` and returns `{ page_id, page }`.
-  - `GET  /api/pages/{page_id}` — Returns persisted page JSON.
-- **Frontend**: no production UI shipped in Phase‑1. A React renderer in `platform-frontend/src/features/pages/` is planned for Phase‑2 and will render structured sections, tables, charts and an inline copilot control.
+  - `POST /api/pages/pages/generate` — Accepts `{ "query": string, "template": string? }` and returns job tracking
+  - `GET  /api/pages/jobs/{job_id}` — Returns job status and completion 
+  - `GET  /api/pages` — Lists all pages with metadata
+  - `GET  /api/pages/{page_id}` — Returns persisted page JSON
+  - `GET  /api/pages/all-folders` — Lists all folders with page counts
+  - `POST /api/pages/folders` — Creates new folder
+  - `DELETE /api/pages/folders/{folder_id}` — Deletes folder with page handling
+- **Frontend**: Test UI component `PagesTestUI.tsx` provides page generation testing interface with structured section rendering.
 
 ## 4. Mandatory Test Gate Definition
 - **Acceptance**: `tests/acceptance/p03_spark/test_structured_page_not_text_wall.py` (contains 8 executable tests)
@@ -76,19 +81,25 @@ pytest tests/integration/test_spark_oracle_data_pipeline.py -q
 - Remove persisted artifacts under `data/pages/` if necessary.
 
 ## 10. Demo Steps
-1. Start backend (development):
+1. Start backend with infrastructure (development):
 ```bash
-# from repo root (uses repo's uv helper/executable)
-uv run api.py
+# Start Docker Compose infrastructure first
+npm run dev:all
+# Backend will be available at http://localhost:8000
 ```
-2. Generate a page (example):
+2. Generate a page (async job example):
 ```bash
-curl -sS -X POST http://localhost:8000/api/pages/generate \
+curl -sS -X POST http://localhost:8000/api/pages/pages/generate \
   -H "Content-Type: application/json" \
-  -d '{"query":"electric scooters 2026","template":"topic_overview"}' | jq
+  -d '{"query":"blockchain technology overview","template":"topic_overview"}' | jq
 ```
-3. Retrieve page JSON by id returned in step (2):
+3. Check job status and retrieve page:
 ```bash
+# Check job status
+curl http://localhost:8000/api/pages/jobs/<job_id> | jq
+# List all pages  
+curl http://localhost:8000/api/pages | jq
+# Get specific page
 curl http://localhost:8000/api/pages/<page_id> | jq
 ```
 4. Run acceptance tests:
