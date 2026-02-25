@@ -25,6 +25,10 @@ a multi-phase iterative research pipeline with gap analysis and targeted follow-
 If `research_mode` is NOT "deep_research" (or is absent), IGNORE this section entirely
 and plan normally.
 
+**🚨 MULTIMODAL INPUT DETECTION:**
+If the user's base query contains an image, video, or local document, instruct Phase 2 (RetrieverAgent) to use the appropriate Multimodal tools (`analyze_image`, `analyze_video`, `analyze_pdf_document`) to extract insights directly from the media *in addition to* or *instead of* web searching.
+
+
 ---
 
 ## DEEP RESEARCH PLAN STRUCTURE (6 Phases)

@@ -6,6 +6,7 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional, List
+import asyncio
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 
@@ -184,6 +185,58 @@ async def analyze_data_file(file_path: str, prompt: str) -> str:
 
     except Exception as e:
         return f"[Error] Data analysis failed: {str(e)}"
+
+@mcp.tool()
+async def analyze_video(video_path: str, prompt: str) -> str:
+    """
+    Analyzes a local video file natively using the Gemini File API.
+    Uploads the video, waits for processing, extracts insights, and then cleans up.
+    
+    HOW IT WORKS:
+    1. Uploads the local video file directly to Gemini's secure file storage.
+    2. Polls the API until the video finishes processing on Google's servers.
+    3. Prompts the Gemini model with the user's query against the entire processed video context.
+    4. Automatically deletes the file from the cloud to maintain security and avoid storage costs.
+    """
+    try:
+        import google.generativeai as genai
+        import time
+    except ImportError:
+        return "[Error] google-generativeai is not installed."
+
+    if not os.path.exists(video_path):
+        return f"[Error] Video not found at path: {video_path}"
+
+    try:
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        
+        # Upload video
+        video_file = genai.upload_file(path=video_path)
+        
+        try:
+            # Polling for processing completion
+            while video_file.state.name == 'PROCESSING':
+                await asyncio.sleep(2)
+                video_file = genai.get_file(video_file.name)
+                
+            if video_file.state.name == 'FAILED':
+                return "[Error] Video processing failed on the server."
+                
+            # Generate content
+            model = genai.GenerativeModel(model_name="gemini-1.5-flash") 
+            response = model.generate_content([video_file, prompt])
+            
+            return str(response.text)
+            
+        finally:
+            # Clean up securely
+            try:
+                genai.delete_file(video_file.name)
+            except Exception:
+                pass
+
+    except Exception as e:
+        return f"[Error] Failed to process video: {str(e)}"
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")
