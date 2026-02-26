@@ -585,10 +585,49 @@ class AgentLoop4:
                         visualizer.mark_failed(step_id, result)
                         context.mark_failed(step_id, str(result))
                         log_error(f"❌ Failed {step_id} after {MAX_STEP_RETRIES} retries: {str(result)}")
+                        # 📼 Chronicle: emit STEP_FAILED + create checkpoint
+                        try:
+                            from session.capture import get_capture
+                            from session.schema import EventType
+                            from session.checkpoint import create_checkpoint
+                            _chronicle = get_capture()
+                            _sid = context.plan_graph.graph.get("session_id", "unknown")
+                            await _chronicle.emit(
+                                EventType.STEP_FAILED,
+                                {"step_id": step_id, "agent": step_data.get("agent", ""), "error": str(result)},
+                                session_id=_sid,
+                            )
+                            create_checkpoint(_sid, "step_failed", context.plan_graph, last_sequence=_chronicle._sequence)
+                        except Exception:
+                            pass
                 elif result["success"]:
                     visualizer.mark_completed(step_id)
                     await context.mark_done(step_id, result["output"])
                     log_step(f"✅ Completed {step_id} ({step_data['agent']})", symbol="✅")
+                    # 📼 Chronicle: emit STEP_COMPLETE + create checkpoint
+                    try:
+                        from session.capture import get_capture
+                        from session.schema import EventType
+                        from session.checkpoint import create_checkpoint
+                        _chronicle = get_capture()
+                        _sid = context.plan_graph.graph.get("session_id", "unknown")
+                        _node = context.plan_graph.nodes[step_id]
+                        await _chronicle.emit(
+                            EventType.STEP_COMPLETE,
+                            {
+                                "step_id": step_id,
+                                "agent": step_data.get("agent", ""),
+                                "cost": _node.get("cost", 0.0),
+                                "input_tokens": _node.get("input_tokens", 0),
+                                "output_tokens": _node.get("output_tokens", 0),
+                                "execution_time_sec": _node.get("execution_time", 0.0),
+                                "status": "completed",
+                            },
+                            session_id=_sid,
+                        )
+                        create_checkpoint(_sid, "step_complete", context.plan_graph, last_sequence=_chronicle._sequence)
+                    except Exception:
+                        pass
                 else:
                     # Agent returned failure - also retry
                     if retry_count < MAX_STEP_RETRIES:
@@ -599,6 +638,21 @@ class AgentLoop4:
                         visualizer.mark_failed(step_id, result["error"])
                         context.mark_failed(step_id, result["error"])
                         log_error(f"❌ Failed {step_id} after {MAX_STEP_RETRIES} retries: {result['error']}")
+                        # 📼 Chronicle: emit STEP_FAILED + create checkpoint
+                        try:
+                            from session.capture import get_capture
+                            from session.schema import EventType
+                            from session.checkpoint import create_checkpoint
+                            _chronicle = get_capture()
+                            _sid = context.plan_graph.graph.get("session_id", "unknown")
+                            await _chronicle.emit(
+                                EventType.STEP_FAILED,
+                                {"step_id": step_id, "agent": step_data.get("agent", ""), "error": result.get("error", "")},
+                                session_id=_sid,
+                            )
+                            create_checkpoint(_sid, "step_failed", context.plan_graph, last_sequence=_chronicle._sequence)
+                        except Exception:
+                            pass
 
             # ===== COST THRESHOLD CHECK =====
             accumulated_cost = sum(
@@ -660,6 +714,24 @@ class AgentLoop4:
         # 📡 EMIT EVENT
         await event_bus.publish("step_start", "AgentLoop4", {"step_id": step_id})
         step_data = context.get_step_data(step_id)
+
+        # 📼 Chronicle: emit STEP_START
+        try:
+            from session.capture import get_capture
+            from session.schema import EventType
+            _chronicle = get_capture()
+            session_id = context.plan_graph.graph.get("session_id", "unknown")
+            await _chronicle.emit(
+                EventType.STEP_START,
+                {
+                    "step_id": step_id,
+                    "agent": step_data.get("agent", ""),
+                    "description": step_data.get("description", ""),
+                },
+                session_id=session_id,
+            )
+        except Exception:
+            pass
         agent_type = step_data["agent"]
         
         # Get inputs from NetworkX graph
