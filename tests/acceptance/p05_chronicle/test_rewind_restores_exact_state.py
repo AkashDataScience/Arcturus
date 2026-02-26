@@ -172,7 +172,7 @@ def test_12_create_checkpoint_persists_and_loads() -> None:
 # === Week 2: Rewind engine and state restoration invariants ===
 
 
-def _make_graph_snapshot(nodes: list[dict], links: list[dict] | None = None) -> dict:
+def _make_graph_snapshot(nodes: list[dict], edges: list[dict] | None = None) -> dict:
     """Build a minimal node_link_data style graph dict for tests."""
     return {
         "directed": True,
@@ -186,7 +186,7 @@ def _make_graph_snapshot(nodes: list[dict], links: list[dict] | None = None) -> 
             "globals_schema": {},
         },
         "nodes": nodes,
-        "links": links or [],
+        "edges": edges or [],
     }
 
 

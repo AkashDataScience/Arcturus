@@ -141,6 +141,10 @@ def restore_from_checkpoint(
             f"Checkpoint '{checkpoint.checkpoint_id}' has no graph snapshot data"
         )
 
+    # Normalize edge key: older NetworkX used "links", newer uses "edges"
+    if "links" in graph_data and "edges" not in graph_data:
+        graph_data = {**graph_data, "edges": graph_data["links"]}
+
     # Reconstruct graph
     plan_graph = nx.node_link_graph(graph_data)
 

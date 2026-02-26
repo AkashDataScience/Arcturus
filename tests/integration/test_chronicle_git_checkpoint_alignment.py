@@ -75,15 +75,15 @@ def test_07_checkpoint_and_rewind_roundtrip() -> None:
             "file_manifest": [],
             "globals_schema": {},
         },
-        "nodes": [
-            {"id": "ROOT", "agent": "System", "status": "completed", "output": None, "error": None, "cost": 0.0, "start_time": None, "end_time": "2025-01-15T12:00:01Z"},
-            {"id": "PlannerAgent", "agent": "PlannerAgent", "status": "completed", "output": {}, "error": None, "cost": 0.01, "start_time": "2025-01-15T12:00:01Z", "end_time": "2025-01-15T12:00:03Z"},
-            {"id": "CoderAgent", "agent": "CoderAgent", "status": "completed", "output": {}, "error": None, "cost": 0.02, "start_time": "2025-01-15T12:00:03Z", "end_time": "2025-01-15T12:00:10Z"},
-        ],
-        "links": [
-            {"source": "ROOT", "target": "PlannerAgent"},
-            {"source": "PlannerAgent", "target": "CoderAgent"},
-        ],
+            "nodes": [
+                {"id": "ROOT", "agent": "System", "status": "completed", "output": None, "error": None, "cost": 0.0, "start_time": None, "end_time": "2025-01-15T12:00:01Z"},
+                {"id": "PlannerAgent", "agent": "PlannerAgent", "status": "completed", "output": {}, "error": None, "cost": 0.01, "start_time": "2025-01-15T12:00:01Z", "end_time": "2025-01-15T12:00:03Z"},
+                {"id": "CoderAgent", "agent": "CoderAgent", "status": "completed", "output": {}, "error": None, "cost": 0.02, "start_time": "2025-01-15T12:00:03Z", "end_time": "2025-01-15T12:00:10Z"},
+            ],
+            "edges": [
+                {"source": "ROOT", "target": "PlannerAgent"},
+                {"source": "PlannerAgent", "target": "CoderAgent"},
+            ],
     }
     with tempfile.TemporaryDirectory() as tmp:
         cp_dir = Path(tmp) / "cp"
@@ -111,7 +111,7 @@ def test_08_rewind_to_latest_selects_newest_checkpoint() -> None:
         "directed": True, "multigraph": False,
         "graph": {"session_id": "integ-s2", "original_query": "q", "status": "completed", "created_at": "2025-01-15T12:00:00Z", "file_manifest": [], "globals_schema": {}},
         "nodes": [{"id": "ROOT", "agent": "System", "status": "completed", "output": None, "error": None, "cost": 0.0, "start_time": None, "end_time": "2025-01-15T12:00:01Z"}],
-        "links": [],
+            "edges": [],
     }
     with tempfile.TemporaryDirectory() as tmp:
         cp_dir = Path(tmp) / "cp"
