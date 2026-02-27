@@ -393,3 +393,179 @@ async def whatsapp_inbound(request: Request) -> Dict[str, Any]:
 
     # Bridge expects a simple 200 OK acknowledgement.
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Google Chat Events API
+# ---------------------------------------------------------------------------
+
+
+@router.post("/googlechat/events")
+async def googlechat_events(request: Request) -> Dict[str, Any]:
+    """Receive Google Chat events (space messages and bot mentions).
+
+    Google Chat POSTs event objects to this endpoint when the bot receives
+    a message in a Space it has been added to, or when a user @-mentions it.
+
+    Event types handled:
+    * ``MESSAGE`` — user sends a message or @-mentions the bot in a Space.
+    * ``ADDED_TO_SPACE`` — bot was added to a Space (acknowledged silently).
+    * ``REMOVED_FROM_SPACE`` — bot was removed (acknowledged silently).
+
+    Optional token verification:
+        If ``GOOGLE_CHAT_VERIFICATION_TOKEN`` is set on the adapter, the
+        ``token`` field in the JSON body is compared against it.  Requests
+        with an invalid token are rejected with HTTP 403.
+
+    The reply is delivered back to Google Chat via the adapter's
+    ``send_message()`` (webhook or service-account mode, whichever is
+    configured).
+
+    Reference:
+        https://developers.google.com/chat/how-tos/bots-develop
+    """
+    body = await request.body()
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    # 1. Optional token verification.
+    bus = _get_bus()
+    adapter = bus.adapters.get("googlechat")
+    verification_token: str = getattr(adapter, "verification_token", "") if adapter else ""
+    if verification_token:
+        token_in_payload = payload.get("token", "")
+        from channels.googlechat import GoogleChatAdapter as _GoogleChatAdapter
+        if not _GoogleChatAdapter.verify_signature(body, token_in_payload, verification_token):
+            raise HTTPException(status_code=403, detail="Invalid Google Chat verification token")
+
+    event_type = payload.get("type", "")
+
+    # 2. Silently acknowledge lifecycle events.
+    if event_type in ("ADDED_TO_SPACE", "REMOVED_FROM_SPACE"):
+        return {"text": ""}
+
+    # 3. Route MESSAGE events through the bus.
+    if event_type == "MESSAGE":
+        message = payload.get("message", {})
+        sender = message.get("sender", {})
+        space = payload.get("space", {})
+
+        space_name = space.get("name", "spaces/unknown")
+        sender_id = sender.get("name", sender.get("email", "unknown"))
+        sender_name = sender.get("displayName", sender.get("name", "unknown"))
+        text = message.get("argumentText", message.get("text", "")).strip()
+        message_name = message.get("name", str(uuid.uuid4()))
+        thread_name = message.get("thread", {}).get("name")
+        is_bot = sender.get("type") == "BOT"
+
+        if not text or is_bot:
+            return {"text": ""}
+
+        envelope = MessageEnvelope.from_googlechat(
+            space_name=space_name,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            text=text,
+            message_name=message_name,
+            is_bot=is_bot,
+            thread_name=thread_name,
+        )
+        await bus.roundtrip(envelope)
+
+    # Google Chat expects a 200 OK with a (possibly empty) JSON body.
+    return {"text": ""}
+
+
+# ---------------------------------------------------------------------------
+# iMessage / BlueBubbles inbound
+# ---------------------------------------------------------------------------
+
+
+@router.post("/imessage/inbound")
+async def imessage_inbound(request: Request) -> Dict[str, Any]:
+    """Receive an inbound iMessage from the BlueBubbles server webhook.
+
+    BlueBubbles POSTs a JSON payload when a new iMessage arrives:
+
+        {
+          "type": "new-message",
+          "data": {
+            "guid":          "...",          // message GUID
+            "text":          "hello",
+            "chats":         [{"guid": "iMessage;+;+15551234567", ...}],
+            "handle":        {"address": "+15551234567", "firstName": "Alice", ...},
+            "isFromMe":      false,
+            "dateCreated":   1234567890000,
+            "isGroupMessage": false
+          }
+        }
+
+    The ``X-BB-Secret`` header carries an optional HMAC-SHA256 signature over
+    the raw body.  Verification is skipped when ``BLUEBUBBLES_WEBHOOK_SECRET``
+    is empty (dev mode).
+
+    Messages sent by the bot itself (``isFromMe: true``) are skipped to
+    prevent reply loops.
+    """
+    body = await request.body()
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    # 1. Optional HMAC-SHA256 signature verification.
+    bus = _get_bus()
+    adapter = bus.adapters.get("imessage")
+    webhook_secret: str = getattr(adapter, "webhook_secret", "") if adapter else ""
+    if webhook_secret:
+        sig = request.headers.get("X-BB-Secret", "")
+        from channels.imessage import iMessageAdapter as _iMessageAdapter
+        if not _iMessageAdapter.verify_signature(body, sig, webhook_secret):
+            raise HTTPException(status_code=403, detail="Invalid BlueBubbles webhook signature")
+
+    # 2. Only handle new-message events.
+    event_type = payload.get("type", "")
+    if event_type != "new-message":
+        return {"ok": True, "skipped": True, "reason": f"event_type={event_type}"}
+
+    data = payload.get("data", {})
+
+    # 3. Skip messages from the bot itself.
+    if data.get("isFromMe", False):
+        return {"ok": True, "skipped": True, "reason": "fromMe"}
+
+    # 4. Extract fields from the BlueBubbles payload.
+    message_guid = data.get("guid") or str(uuid.uuid4())
+    text = data.get("text", "").strip()
+
+    # Guard: skip empty text (media without caption, tapbacks, etc.)
+    if not text:
+        return {"ok": True, "skipped": True, "reason": "empty_text"}
+
+    # Chat GUID comes from the first chat entry
+    chats = data.get("chats", [])
+    chat_guid = chats[0].get("guid", "iMessage;+;unknown") if chats else "iMessage;+;unknown"
+
+    handle = data.get("handle", {})
+    sender_id = handle.get("address", "unknown")
+    # Build a human-readable name from firstName + lastName if available
+    first = handle.get("firstName", "")
+    last = handle.get("lastName", "")
+    sender_name = f"{first} {last}".strip() or sender_id
+
+    is_group = bool(data.get("isGroupMessage", False))
+
+    # 5. Build envelope and roundtrip through the bus.
+    envelope = MessageEnvelope.from_imessage(
+        chat_guid=chat_guid,
+        sender_id=sender_id,
+        sender_name=sender_name,
+        text=text,
+        message_guid=message_guid,
+        is_group=is_group,
+    )
+    await bus.roundtrip(envelope)
+
+    return {"ok": True}

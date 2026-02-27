@@ -70,6 +70,44 @@ channels:
       max_retries: 3
       retry_backoff_seconds: 1.0
 
+  # Google Chat — Chat API or incoming webhook
+  # Webhook mode (simple): set GOOGLE_CHAT_WEBHOOK_URL only.
+  # Service account mode (full): set GOOGLE_CHAT_SERVICE_ACCOUNT_TOKEN.
+  # Set GOOGLE_CHAT_VERIFICATION_TOKEN to verify inbound event tokens.
+  google_chat:
+    enabled: true
+    # Incoming webhook URL (simple mode — no GCP project needed)
+    webhook_url_env: GOOGLE_CHAT_WEBHOOK_URL
+    # OAuth2 bearer token for service-account mode
+    service_account_token_env: GOOGLE_CHAT_SERVICE_ACCOUNT_TOKEN
+    # Token for verifying inbound events from Google Chat
+    verification_token_env: GOOGLE_CHAT_VERIFICATION_TOKEN
+    parse_mode: googlechat
+    policies:
+      # Google Chat always sends events when @mentioned or DM'd
+      group_activation: mention-only
+      dm_allowlist: []
+      max_retries: 3
+      retry_backoff_seconds: 1.0
+
+  # iMessage / BlueBubbles — requires BlueBubbles server running on a Mac
+  # https://bluebubbles.app — open-source bridge from iMessage to REST API
+  imessage:
+    enabled: true
+    # Base URL of the BlueBubbles HTTP server
+    bluebubbles_url_env: BLUEBUBBLES_URL              # default: http://localhost:1234
+    # BlueBubbles server password (required for API calls)
+    password_env: BLUEBUBBLES_PASSWORD
+    # Shared HMAC-SHA256 secret for inbound webhook auth (optional but recommended)
+    webhook_secret_env: BLUEBUBBLES_WEBHOOK_SECRET
+    # iMessage renders plain text; no Markdown conversion needed
+    parse_mode: plain
+    policies:
+      group_activation: always-on
+      dm_allowlist: []
+      max_retries: 3
+      retry_backoff_seconds: 1.0
+
 # Global routing defaults (overridden per channel above)
 routing:
   default_queue_mode: serial   # "serial" | "parallel"

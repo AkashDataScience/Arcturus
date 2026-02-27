@@ -304,6 +304,89 @@ class MessageEnvelope:
             },
         )
 
+    @classmethod
+    def from_imessage(
+        cls,
+        chat_guid: str,
+        sender_id: str,
+        sender_name: str,
+        text: str,
+        message_guid: str,
+        is_group: bool = False,
+        is_bot: bool = False,
+        **kwargs,
+    ) -> "MessageEnvelope":
+        """Create a MessageEnvelope from a BlueBubbles webhook payload.
+
+        Args:
+            chat_guid: BlueBubbles chat GUID (e.g. ``iMessage;+;+15551234567``
+                       for DMs or ``iMessage;+;chat{guid}`` for groups).
+            sender_id: Sender's iMessage handle (phone or email).
+            sender_name: Sender's display name (from Contacts or address book).
+            text: Message text.
+            message_guid: BlueBubbles message GUID (globally unique).
+            is_group: True if the message came from a group iMessage chat.
+            is_bot: Whether the sender is the bot itself (filtered upstream).
+            **kwargs: Additional metadata to store.
+
+        Returns:
+            MessageEnvelope instance.
+        """
+        return cls(
+            channel="imessage",
+            channel_message_id=message_guid,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            content=cls.normalize_text(text),
+            thread_id=chat_guid,
+            conversation_id=chat_guid,
+            sender_is_bot=is_bot,
+            metadata={
+                "chat_guid": chat_guid,
+                "is_group": is_group,
+                **kwargs,
+            },
+        )
+
+    @classmethod
+    def from_googlechat(
+        cls,
+        space_name: str,
+        sender_id: str,
+        sender_name: str,
+        text: str,
+        message_name: str,
+        is_bot: bool = False,
+        thread_name: Optional[str] = None,
+        **kwargs,
+    ) -> "MessageEnvelope":
+        """Create a MessageEnvelope from a Google Chat event payload.
+
+        Args:
+            space_name: Google Chat Space resource name (``spaces/XXXXXXXXX``).
+            sender_id: Sender's Google user ID or email.
+            sender_name: Sender's display name.
+            text: Message text (may include @mentions like ``<users/123>``).
+            message_name: Message resource name (``spaces/X/messages/Y``).
+            is_bot: Whether the sender is a bot.
+            thread_name: Thread resource name for threaded conversations.
+            **kwargs: Additional metadata to store.
+
+        Returns:
+            MessageEnvelope instance.
+        """
+        return cls(
+            channel="googlechat",
+            channel_message_id=message_name,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            content=cls.normalize_text(text),
+            thread_id=thread_name or space_name,
+            conversation_id=space_name,
+            sender_is_bot=is_bot,
+            metadata={"space_name": space_name, "thread_name": thread_name, **kwargs},
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert envelope to dictionary for serialization."""
         return {

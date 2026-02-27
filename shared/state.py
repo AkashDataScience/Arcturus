@@ -1,6 +1,7 @@
 # Shared State Module
 # This module holds global state that is shared across all routers
 
+import threading
 from pathlib import Path
 
 # Project root for path resolution in routers
@@ -17,7 +18,6 @@ active_loops = {}
 # the Event so the voice orchestrator wakes up immediately.
 # Thread-safe: both the orchestrator thread and the async event loop
 # can access this concurrently.
-import threading
 
 _run_results_lock = threading.Lock()
 run_results: dict = {}           # run_id → {"output": str, "event": Event}
@@ -25,7 +25,7 @@ run_results: dict = {}           # run_id → {"output": str, "event": Event}
 def register_run_waiter(run_id: str):
     """
     Create an Event the orchestrator can wait on.
-    
+
     Race-safe: if signal_run_complete already fired for this run_id
     (the run finished before we registered), we return a pre-set Event
     so the orchestrator unblocks immediately.
@@ -86,7 +86,6 @@ def get_remme_store():
     """Get the vector store instance via abstraction layer. Uses get_vector_store()."""
     global _remme_store
     if _remme_store is None:
-        import os
         from memory.vector_store import get_vector_store
         _remme_store = get_vector_store()
     return _remme_store
@@ -166,7 +165,8 @@ def get_message_bus():
     """Get the Nexus MessageBus instance, creating it if needed.
 
     Wires together: MessageFormatter + MessageRouter (real AgentLoop4 via runs API) +
-    TelegramAdapter + WebChatAdapter + SlackAdapter + DiscordAdapter + WhatsAppAdapter.
+    TelegramAdapter + WebChatAdapter + SlackAdapter + DiscordAdapter + WhatsAppAdapter +
+    GoogleChatAdapter.
     Group activation policies are loaded from config/channels.yaml.
     """
     global _message_bus
@@ -179,6 +179,8 @@ def get_message_bus():
         from channels.slack import SlackAdapter
         from channels.discord import DiscordAdapter
         from channels.whatsapp import WhatsAppAdapter
+        from channels.googlechat import GoogleChatAdapter
+        from channels.imessage import iMessageAdapter
         formatter = MessageFormatter()
         group_activation = _load_group_activation()
         router = MessageRouter(
@@ -195,6 +197,8 @@ def get_message_bus():
                 "slack": SlackAdapter(),
                 "discord": DiscordAdapter(),
                 "whatsapp": WhatsAppAdapter(),
+                "googlechat": GoogleChatAdapter(),
+                "imessage": iMessageAdapter(),
             },
         )
     return _message_bus

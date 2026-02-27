@@ -35,6 +35,8 @@ class MessageFormatter:
         "discord": "_format_discord",
         "webchat": "_format_webchat",
         "whatsapp": "_format_plain",  # WhatsApp renders *bold*/_italic_ natively
+        "googlechat": "_format_googlechat",
+        "imessage": "_format_plain",  # iMessage renders plain text natively
     }
 
     def format(self, text: str, channel: str, **kwargs) -> str:
@@ -183,6 +185,29 @@ class MessageFormatter:
         result = "".join(result_parts)
         result = result.replace("\n", "<br>")
         return result
+
+    def _format_googlechat(self, text: str) -> str:
+        """Convert Markdown to Google Chat message text.
+
+        Google Chat supports a limited subset of formatting via its own
+        markup (not Markdown), but plain text with minimal decoration is
+        the safest universal option across all Google Chat clients.
+
+        Rules applied:
+        - ``**bold**`` → ``*bold*``  (Google Chat bold)
+        - ``_italic_`` → ``_italic_``  (same — Google Chat italic)
+        - `` `code` `` → `` `code` ``  (same — Google Chat monospace)
+        - ``# Heading`` → ``*Heading*``  (no native headings)
+        - Links ``[label](url)`` → ``label (url)``  (plain text fallback)
+        """
+        # Headings → bold
+        text = re.sub(r"^#{1,6}\s+(.+)$", r"*\1*", text, flags=re.MULTILINE)
+        # Links [label](url) → label (url)
+        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
+        # **bold** → *bold*
+        text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+        # Italic: _italic_ unchanged (Google Chat uses same syntax)
+        return text
 
     def _format_plain(self, text: str) -> str:
         """Strip all Markdown markup and return plain text.

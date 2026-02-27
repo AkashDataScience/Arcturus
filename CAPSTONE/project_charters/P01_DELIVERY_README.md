@@ -2,6 +2,15 @@
 
 ## 1. Scope Delivered
 
+**Week 3+ - Google Chat Adapter:**
+- ✅ **channels/googlechat.py**: GoogleChatAdapter — dual-mode delivery (incoming webhook + service-account Bearer token); token verification for inbound events
+- ✅ **gateway/envelope.py**: `from_googlechat()` constructor — space_name, sender, thread_name, message_name
+- ✅ **gateway/formatter.py**: `_format_googlechat()` — headings → bold, links → plain text
+- ✅ **config/channels.yaml**: `google_chat` channel block — env-var refs for webhook URL, service account token, verification token
+- ✅ **shared/state.py**: `GoogleChatAdapter` wired into `get_message_bus()`
+- ✅ **routers/nexus.py**: `POST /api/nexus/googlechat/events` — handles `MESSAGE`, `ADDED_TO_SPACE`, `REMOVED_FROM_SPACE`; optional token verification
+- ✅ **tests/test_googlechat_roundtrip.py**: 8 tests (send/error/network/no-creds, bus roundtrip, session affinity, webhook event, lifecycle event)
+
 **Week 3 (Sprint 4) - Real AgentLoop4 Wiring + Output Endpoint:**
 - ✅ **routers/runs.py**: `GET /api/runs/{run_id}/output` — new read-only endpoint exposing extracted text output of a completed run (`status`: `running` | `completed` | `failed` | `not_found`)
 - ✅ **routers/runs.py**: `_extract_output_str()` helper — refactored output extraction logic (FormatterAgent first, largest-string fallback, JSON/fence stripping) shared between `process_run()` and the new endpoint
@@ -128,13 +137,13 @@ GET  /api/runs/{run_id}/output           [NEW — Week 3]
 
 ## 5. Test Evidence
 
-**Automated test suite: 89 tests, all passing (2026-02-27):**
+**Automated test suite: 98 tests, all passing (2026-02-27):**
 
 | File | Tests | What it covers |
 |------|-------|----------------|
 | `tests/acceptance/p01_nexus/test_multichannel_roundtrip.py` | 8 | Contract + delivery README checks |
 | `tests/integration/test_nexus_session_affinity.py` | 5 | Session affinity across channels |
-| `tests/test_message_formatter.py` | 12 | Formatter for all 5 channels |
+| `tests/test_message_formatter.py` | 12 | Formatter for all 6 channels |
 | `tests/test_message_bus.py` | 11 | ingest/deliver/roundtrip/dedup/retry/media |
 | `tests/test_webchat_roundtrip.py` | 5 | WebChat end-to-end via TestClient |
 | `tests/test_webchat_sse.py` | 6 | SSE subscribe/push/route contract |
@@ -144,6 +153,7 @@ GET  /api/runs/{run_id}/output           [NEW — Week 3]
 | `tests/test_whatsapp_roundtrip.py` | 8 | WhatsApp HMAC/roundtrip/group/bridge |
 | `tests/test_get_run_output.py` | 3 | GET /api/runs/{id}/output endpoint |
 | `tests/test_runs_agent_factory.py` | 5 | create_runs_agent factory (mocked HTTP) |
+| `tests/test_googlechat_roundtrip.py` | 8 | Google Chat send/error/network/no-creds/bus/affinity/webhook/lifecycle |
 
 **Run command:**
 ```bash
@@ -153,7 +163,8 @@ uv run python -m pytest tests/acceptance/p01_nexus/ \
   tests/test_webchat_roundtrip.py tests/test_webchat_sse.py \
   tests/test_slack_roundtrip.py tests/test_group_activation.py \
   tests/test_discord_roundtrip.py tests/test_whatsapp_roundtrip.py \
-  tests/test_get_run_output.py tests/test_runs_agent_factory.py -v
+  tests/test_get_run_output.py tests/test_runs_agent_factory.py \
+  tests/test_p01_latency.py tests/test_googlechat_roundtrip.py -v
 ```
 
 **Live Slack integration verified (Week 3 — real agent):**
