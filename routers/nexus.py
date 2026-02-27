@@ -293,6 +293,102 @@ async def discord_events(request: Request) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Microsoft Teams inbound
+# ---------------------------------------------------------------------------
+
+
+@router.post("/teams/events")
+async def teams_events(request: Request) -> Dict[str, Any]:
+    """Receive an inbound Bot Framework Activity from Microsoft Teams.
+
+    Microsoft Teams posts a Bot Framework Activity JSON payload when
+    a user sends a message to the bot:
+
+        {
+          "type":          "message",
+          "id":            "activity-id",
+          "text":          "Hello Arcturus",
+          "from":          {"id": "29:...", "name": "Alice", "role": "user"},
+          "conversation":  {"id": "a:...", "isGroup": false},
+          "channelData":   {"teamsChannelId": "19:...", "team": {"id": "..."}},
+          "serviceUrl":    "https://smba.trafficmanager.net/apis"
+        }
+
+    The ``Authorization: Bearer {token}`` header carries an optional
+    credential.  Verification is skipped when ``TEAMS_APP_PASSWORD`` is
+    empty (dev mode).
+
+    Non-message activities (typing, installationUpdate, etc.) are skipped.
+    Bot-sent messages (``from.role == "bot"``) are skipped to prevent loops.
+    """
+    body = await request.body()
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    # 1. Optional Bearer token verification.
+    bus = _get_bus()
+    adapter = bus.adapters.get("teams")
+    app_password: str = getattr(adapter, "app_password", "") if adapter else ""
+    if app_password:
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header.removeprefix("Bearer ").strip()
+        from channels.teams import TeamsAdapter as _TeamsAdapter
+        if not _TeamsAdapter.verify_token(token, app_password):
+            raise HTTPException(status_code=403, detail="Invalid Teams Authorization token")
+
+    # 2. Only handle message activities.
+    activity_type = payload.get("type", "")
+    if activity_type != "message":
+        return {"ok": True, "skipped": True, "reason": f"activity_type={activity_type}"}
+
+    # 3. Skip messages from bots to prevent loops.
+    sender = payload.get("from", {})
+    if sender.get("role", "").lower() == "bot":
+        return {"ok": True, "skipped": True, "reason": "fromBot"}
+
+    # 4. Extract fields from the Bot Framework Activity.
+    message_id = payload.get("id") or str(uuid.uuid4())
+    text = (payload.get("text") or "").strip()
+
+    # Guard: skip empty text (card actions, attachments without text, etc.)
+    if not text:
+        return {"ok": True, "skipped": True, "reason": "empty_text"}
+
+    channel_data = payload.get("channelData", {})
+    team_id = (channel_data.get("team") or {}).get("id", "")
+    teams_channel_id = channel_data.get("teamsChannelId", "")
+
+    # For DMs, team_id may be absent; fall back to conversation.id
+    conversation = payload.get("conversation", {})
+    if not team_id:
+        team_id = conversation.get("id", "dm")
+    if not teams_channel_id:
+        teams_channel_id = conversation.get("id", "")
+
+    sender_id = sender.get("aadObjectId") or sender.get("id", "unknown")
+    sender_name = sender.get("name", sender_id)
+    service_url = payload.get("serviceUrl", "")
+    thread_id_in = payload.get("replyToId")  # set for threaded replies
+
+    # 5. Build envelope and roundtrip through the bus.
+    envelope = MessageEnvelope.from_teams(
+        team_id=team_id,
+        channel_id=teams_channel_id,
+        sender_id=sender_id,
+        sender_name=sender_name,
+        text=text,
+        message_id=message_id,
+        thread_id_in=thread_id_in,
+        service_url=service_url,
+    )
+    await bus.roundtrip(envelope)
+
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # WhatsApp (Baileys bridge inbound)
 # ---------------------------------------------------------------------------
 

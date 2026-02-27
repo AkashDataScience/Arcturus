@@ -108,6 +108,26 @@ channels:
       max_retries: 3
       retry_backoff_seconds: 1.0
 
+  # Microsoft Teams — requires Azure Bot Service registration
+  # Register at: https://dev.botframework.com or Azure Portal → Bot Services
+  # Set the messaging endpoint to: http://<host>:8000/api/nexus/teams/events
+  teams:
+    enabled: true
+    # Azure Bot Service app registration ID
+    app_id_env: TEAMS_APP_ID
+    # Azure Bot Service app password (shared secret for token verification)
+    # Leave empty to disable Bearer token verification (dev mode)
+    app_password_env: TEAMS_APP_PASSWORD
+    # Bot Framework service URL (set automatically by Teams; only needed for outbound)
+    service_url_env: TEAMS_SERVICE_URL
+    # Teams supports standard Markdown (headings → bold conversion applied)
+    parse_mode: markdown
+    policies:
+      group_activation: mention-only
+      dm_allowlist: []
+      max_retries: 3
+      retry_backoff_seconds: 1.0
+
 # Global routing defaults (overridden per channel above)
 routing:
   default_queue_mode: serial   # "serial" | "parallel"

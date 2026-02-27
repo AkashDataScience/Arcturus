@@ -37,6 +37,7 @@ class MessageFormatter:
         "whatsapp": "_format_plain",  # WhatsApp renders *bold*/_italic_ natively
         "googlechat": "_format_googlechat",
         "imessage": "_format_plain",  # iMessage renders plain text natively
+        "teams": "_format_teams",
     }
 
     def format(self, text: str, channel: str, **kwargs) -> str:
@@ -207,6 +208,25 @@ class MessageFormatter:
         # **bold** → *bold*
         text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
         # Italic: _italic_ unchanged (Google Chat uses same syntax)
+        return text
+
+    def _format_teams(self, text: str) -> str:
+        """Convert Markdown to Microsoft Teams message text.
+
+        Teams supports standard Markdown in most contexts.  Headings are
+        not natively rendered, so they are converted to bold.
+
+        Rules applied:
+        - ``# Heading`` → ``**Heading**``
+        - ``**bold**`` → ``**bold**``  (unchanged — Teams supports this)
+        - ``_italic_`` → ``*italic*``  (Teams uses single asterisk for italic)
+        - `` `code` `` → `` `code` ``  (unchanged)
+        - Links ``[label](url)`` → ``[label](url)``  (Teams renders natively)
+        """
+        # Headings → **bold**
+        text = re.sub(r"^#{1,6}\s+(.+)$", r"**\1**", text, flags=re.MULTILINE)
+        # _italic_ → *italic*
+        text = re.sub(r"(?<!\*)\b_(.+?)_\b", r"*\1*", text)
         return text
 
     def _format_plain(self, text: str) -> str:

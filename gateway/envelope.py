@@ -387,6 +387,58 @@ class MessageEnvelope:
             metadata={"space_name": space_name, "thread_name": thread_name, **kwargs},
         )
 
+    @classmethod
+    def from_teams(
+        cls,
+        team_id: str,
+        channel_id: str,
+        sender_id: str,
+        sender_name: str,
+        text: str,
+        message_id: str,
+        is_bot: bool = False,
+        thread_id_in: Optional[str] = None,
+        service_url: str = "",
+        **kwargs,
+    ) -> "MessageEnvelope":
+        """Create a MessageEnvelope from a Microsoft Teams Bot Framework Activity.
+
+        Args:
+            team_id: Teams team ID (from ``channelData.team.id``).
+            channel_id: Teams channel ID (from ``channelData.teamsChannelId``
+                or ``conversation.id`` for DMs).
+            sender_id: Sender's AAD object ID (``from.aadObjectId``) or
+                ``from.id``.
+            sender_name: Sender's display name (``from.name``).
+            text: Message text (may include HTML entities from Teams).
+            message_id: Activity ID (``activity.id``).
+            is_bot: Whether the sender is a bot (``from.role == "bot"``).
+            thread_id_in: Conversation thread ID for threaded replies.
+            service_url: Bot Framework service URL from the Activity (used
+                for outbound replies).
+            **kwargs: Additional metadata to store.
+
+        Returns:
+            MessageEnvelope instance.
+        """
+        return cls(
+            channel="teams",
+            channel_message_id=message_id,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            content=cls.normalize_text(text),
+            thread_id=thread_id_in or channel_id,
+            conversation_id=f"{team_id}:{channel_id}",
+            sender_is_bot=is_bot,
+            metadata={
+                "team_id": team_id,
+                "channel_id": channel_id,
+                "thread_id": thread_id_in,
+                "service_url": service_url,
+                **kwargs,
+            },
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert envelope to dictionary for serialization."""
         return {

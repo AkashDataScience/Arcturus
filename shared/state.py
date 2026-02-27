@@ -181,6 +181,7 @@ def get_message_bus():
         from channels.whatsapp import WhatsAppAdapter
         from channels.googlechat import GoogleChatAdapter
         from channels.imessage import iMessageAdapter
+        from channels.teams import TeamsAdapter
         formatter = MessageFormatter()
         group_activation = _load_group_activation()
         router = MessageRouter(
@@ -199,6 +200,7 @@ def get_message_bus():
                 "whatsapp": WhatsAppAdapter(),
                 "googlechat": GoogleChatAdapter(),
                 "imessage": iMessageAdapter(),
+                "teams": TeamsAdapter(),
             },
         )
     return _message_bus
