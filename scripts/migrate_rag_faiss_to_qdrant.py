@@ -29,10 +29,12 @@ def get_embedding(text: str):
     from config.settings_loader import get_ollama_url, get_model, get_timeout
     url = get_ollama_url("embeddings")
     model = get_model("embedding")
-    resp = requests.post(url, json={"model": model, "prompt": text}, timeout=get_timeout())
+    resp = requests.post(url, json={"model": model, "input": text}, timeout=get_timeout())
     resp.raise_for_status()
     import numpy as np
-    return np.array(resp.json()["embedding"], dtype=np.float32)
+    data = resp.json()
+    emb = data["embeddings"][0] if data.get("embeddings") else data.get("embedding", [])
+    return np.array(emb, dtype=np.float32)
 
 
 def migrate():

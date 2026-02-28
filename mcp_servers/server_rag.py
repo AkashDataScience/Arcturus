@@ -129,9 +129,12 @@ def get_rg_path():
 
 
 def get_embedding(text: str) -> np.ndarray:
-    result = requests.post(EMBED_URL, json={"model": EMBED_MODEL, "prompt": text}, timeout=OLLAMA_TIMEOUT)
+    result = requests.post(EMBED_URL, json={"model": EMBED_MODEL, "input": text}, timeout=OLLAMA_TIMEOUT)
     result.raise_for_status()
-    return np.array(result.json()["embedding"], dtype=np.float32)
+    data = result.json()
+    # Ollama /api/embed returns "embeddings" (plural); legacy used "embedding" (singular)
+    emb = data["embeddings"][0] if data.get("embeddings") else data.get("embedding", [])
+    return np.array(emb, dtype=np.float32)
 
 def chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     words = text.split()

@@ -27,3 +27,9 @@ collections:
     distance: cosine
     is_tenant: false       # RAG can add user_id/space_id filter later
     indexed_payload_fields: [doc, doc_type, session_id]
+
+  test_rag_chunks:         # Test collection; mirrors arcturus_rag_chunks
+    dimension: 768
+    distance: cosine
+    is_tenant: false
+    indexed_payload_fields: [doc]

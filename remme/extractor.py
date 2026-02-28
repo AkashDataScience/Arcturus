@@ -13,7 +13,7 @@ import json
 import sys
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
-
+import pdb
 # Add project root to path and import settings
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config.settings_loader import settings, get_ollama_url, get_model, get_timeout
@@ -59,20 +59,31 @@ class RemmeExtractor:
         if existing_memories:
             memories_str = "\n".join([f"ID: {m['id']} | Fact: {m['text']}" for m in existing_memories])
 
-        # 2. Load extraction prompt
+        # 2. Load extraction prompt (priority: Skill > file > settings)
+        base_prompt = None
         try:
-            prompt_path = Path(__file__).parent.parent / "prompts" / "remme_extraction.md"
-            base_prompt = prompt_path.read_text().strip()
-        except:
-            base_prompt = settings.get("remme", {}).get("extraction_prompt", "Extract facts from conversation.")
+            from shared.state import get_skill_manager
+            skill = get_skill_manager().get_skill("remme_extraction")
+            if skill and skill.prompt_text:
+                base_prompt = skill.prompt_text.strip()
+        except Exception:
+            pass
+        if not base_prompt:
+            try:
+                prompt_path = Path(__file__).parent.parent / "prompts" / "remme_extraction.md"
+                base_prompt = prompt_path.read_text().strip()
+            except Exception:
+                base_prompt = settings.get("remme", {}).get("extraction_prompt", "Extract facts from conversation.")
 
         system_prompt = f"""{base_prompt}
+        
 
 EXISTING RELEVANT MEMORIES:
 {memories_str}
 """
 
         print(f"[DEBUG] RemMe Target Model: {self.model}")
+        pdb.set_trace()
         
         try:
             response = requests.post(

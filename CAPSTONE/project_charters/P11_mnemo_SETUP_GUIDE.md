@@ -1,7 +1,12 @@
 # Project 11 Setup Guide: Qdrant (Cloud or Local)
 
-This guide will help you set up Qdrant (cloud or local via Docker) for Phase 1 of Project 11. 
-**Note**: You don't need to do these steps if you don't want to move to qdrant for now. The default config will use faiss (the legacy one).
+This guide will help you set up Qdrant (cloud or local via Docker) for Phase 1 of Project 11 (Mnemo).
+
+**Two vector stores** use Qdrant:
+- **Remme memories** (`arcturus_memories`) — user preferences, facts, identity
+- **RAG chunks** (`arcturus_rag_chunks`) — document chunks, conversation history
+
+**Note**: You don't need to do these steps if you don't want to move to Qdrant. The default config uses FAISS (legacy) for both.
 
 ## Prerequisites
 
@@ -31,6 +36,8 @@ Choose one of the following options:
    ```
    QDRANT_URL=https://your-cluster-id.region.cloud-provider.cloud.qdrant.io
    QDRANT_API_KEY=your-api-key-here
+   VECTOR_STORE_PROVIDER=qdrant
+   RAG_VECTOR_STORE_PROVIDER=qdrant
    ```
 
    The application reads these from the environment (see `memory/qdrant_config.py`). No code changes are required.
@@ -54,6 +61,12 @@ docker ps | grep qdrant
 ```
 
 You should see `arcturus-qdrant` container running.
+
+**Optional**: Add to `.env` to use Qdrant:
+```
+VECTOR_STORE_PROVIDER=qdrant
+RAG_VECTOR_STORE_PROVIDER=qdrant
+```
 
 ## Step 2: Check Qdrant Health
 
@@ -101,8 +114,11 @@ Expected output:
 
 1. **Docker**: Open http://localhost:6333/dashboard  
    **Cloud**: Open your cluster dashboard in Qdrant Cloud Console
-2. You should see the `arcturus_memories` collection
-3. Check the points count (should match test memories added)
+2. Collections (created on first use):
+   - `arcturus_memories` — Remme memories (user preferences, facts)
+   - `arcturus_rag_chunks` — RAG document chunks
+   - `test_memories` — created by test script
+3. Check the points count for each collection
 
 ## Troubleshooting
 
@@ -134,13 +150,33 @@ uv sync
 pip install -e .
 ```
 
+## Migration: FAISS → Qdrant
+
+### Remme memories
+
+```bash
+export VECTOR_STORE_PROVIDER=qdrant
+uv run python scripts/migrate_faiss_to_qdrant.py
+```
+
+Reads from `memory/remme_index/`, writes to `arcturus_memories` collection.
+
+### RAG document chunks
+
+```bash
+export RAG_VECTOR_STORE_PROVIDER=qdrant
+uv run python scripts/migrate_rag_faiss_to_qdrant.py
+```
+
+Reads from `mcp_servers/faiss_index/` (metadata.json + index.bin), writes to `arcturus_rag_chunks`. Keeps `metadata.json` for BM25 hybrid search.
+
 ## Next Steps
 
 Once Qdrant is running and tests pass:
 
-1. **Review the vector store implementation**: `memory/vector_store.py`
-2. **Understand the API**: Compare with `remme/store.py` (FAISS version)
-3. **Plan migration**: How to move existing FAISS data to Qdrant
+1. **Remme**: `memory/vector_store.py`, `memory/backends/qdrant_store.py`
+2. **RAG**: `memory/rag_store.py`, `memory/rag_backends/qdrant_rag_store.py`
+3. **Config**: `config/qdrant_config.yaml` — collection specs
 4. **Write integration tests**: Test with real embeddings from your models
 
 ## Useful Commands
@@ -176,15 +212,25 @@ For production deployment:
 
 Example:
 ```python
-# Via factory (recommended) - url/api_key from config/qdrant_config.yaml or QDRANT_URL, QDRANT_API_KEY
+# Remme memories
 from memory.vector_store import get_vector_store
-store = get_vector_store(provider="qdrant")
+store = get_vector_store(provider="qdrant")  # arcturus_memories
 
-# Or with explicit collection
-store = get_vector_store(provider="qdrant", collection_name="arcturus_memories")
+# RAG document chunks
+from memory.rag_store import get_rag_vector_store
+rag_store = get_rag_vector_store(provider="qdrant")  # arcturus_rag_chunks
 ```
+
+## Environment Variables Summary
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `QDRANT_URL` | Qdrant server URL | `http://localhost:6333` |
+| `QDRANT_API_KEY` | API key (Cloud) | `null` |
+| `VECTOR_STORE_PROVIDER` | Remme memories backend | `faiss` |
+| `RAG_VECTOR_STORE_PROVIDER` | RAG chunks backend | `faiss` |
 
 ---
 
-**Ready to proceed?** Once Qdrant is running and tests pass, you can start building the migration from FAISS to Qdrant! 🚀
+**Ready to proceed?** Once Qdrant is running and tests pass, run the migration scripts to move existing FAISS data to Qdrant! 🚀
 
