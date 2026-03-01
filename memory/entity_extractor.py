@@ -3,6 +3,7 @@ Entity Extractor — Extracts entities and relationships from memory text for th
 
 Uses LLM (Ollama) to produce structured entities, entity-entity relationships,
 and user-centric facts (LIVES_IN, WORKS_AT, KNOWS, PREFERS).
+Model and prompt follow the same config/skill pattern as remme/extractor.py.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import Any, Dict, List, Optional
 
 # Add project root
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from config.settings_loader import get_ollama_url, get_model, get_timeout
+from config.settings_loader import get_ollama_url, get_model, get_timeout, settings
 
 import requests
 
@@ -26,16 +27,28 @@ class EntityExtractor:
     """
 
     def __init__(self, model: Optional[str] = None):
-        self.model = model or get_model("memory_extraction")
+        # Use provided model or config (entity_extraction; get_model falls back to default if missing)
+        self.model = model or get_model("entity_extraction")
         self.api_url = get_ollama_url("chat")
         self._prompt: Optional[str] = None
 
     def _load_prompt(self) -> str:
         if self._prompt is not None:
             return self._prompt
-        prompt_path = Path(__file__).parent.parent / "prompts" / "entity_extraction.md"
-        if prompt_path.exists():
-            self._prompt = prompt_path.read_text().strip()
+        # Priority: Skill > file in skill folder > settings > inline fallback
+        try:
+            from shared.state import get_skill_manager
+            skill = get_skill_manager().get_skill("entity_extraction")
+            if skill and skill.prompt_text:
+                self._prompt = skill.prompt_text.strip()
+                return self._prompt
+        except Exception:
+            pass
+        skill_prompt_path = Path(__file__).parent.parent / "core" / "skills" / "library" / "entity_extraction" / "SKILL.md"
+        if skill_prompt_path.exists():
+            self._prompt = skill_prompt_path.read_text(encoding="utf-8", errors="replace").strip()
+        elif settings.get("entity_extraction", {}).get("extraction_prompt"):
+            self._prompt = settings["entity_extraction"]["extraction_prompt"]
         else:
             self._prompt = (
                 "Extract entities (Person, Company, City, Concept, etc.), "
