@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from typing import Optional
 from ops.tracing import run_span, agent_execute_node_span
 from opentelemetry.trace import Status, StatusCode
-import pdb
 from shared.state import (
     active_loops,
     get_multi_mcp,
@@ -154,16 +153,21 @@ async def process_run(run_id: str, query: str):
             context = None  # Initialize for safe access in finally block
             results = []
             try:
+                from memory.user_id import get_user_id
                 emb = get_embedding(query, task_type="search_query")
-                results = remme_store.search(emb, query_text=query, k=3)
-                pdb.set_trace()
+                # Smarter search (P11 9.1): fetch more candidates (k=10), use top 3 for direct context,
+                # use all 10 for entity expansion; entity-first path adds memories by entity name.
+                results = remme_store.search(emb, query_text=query, k=10)
+                top_for_context = 3
+                result_ids = {r["id"] for r in results[:top_for_context]}
                 if results:
-                    memory_str = "\n".join([f"- {r['text']} (Confidence: {r.get('score', 0):.2f})" for r in results])
+                    memory_str = "\n".join(
+                        [f"- {r['text']} (Confidence: {r.get('score', 0):.2f})" for r in results[:top_for_context]]
+                    )
                     memory_context = f"PREVIOUS MEMORIES ABOUT USER:\n{memory_str}\n"
-                    # Neo4j knowledge graph expansion (if enabled)
+                    # Neo4j: use entity_ids from all k results (not just top 3) for graph expansion
                     try:
                         from memory.knowledge_graph import get_knowledge_graph
-                        from memory.user_id import get_user_id
                         kg = get_knowledge_graph()
                         if kg and kg.enabled:
                             entity_ids = []
@@ -171,8 +175,7 @@ async def process_run(run_id: str, query: str):
                                 entity_ids.extend(r.get("entity_ids") or [])
                             if entity_ids:
                                 expanded = kg.expand_from_entities(entity_ids, user_id=get_user_id())
-                                result_ids = {r["id"] for r in results}
-                                # 1. Entities and relationships (e.g. "John (Person) related to Google (Company)")
+                                # 1. Entities and relationships
                                 if expanded.get("entities"):
                                     ent_parts = []
                                     for e in expanded["entities"][:6]:
@@ -187,7 +190,7 @@ async def process_run(run_id: str, query: str):
                                                 ent_parts.append(f"  {name} ({etype})")
                                     if ent_parts:
                                         memory_context += "\nRELATED ENTITIES (from knowledge graph):\n" + "\n".join(ent_parts) + "\n"
-                                # 2. Additional memories from graph (not in top-k search) - fetch by id
+                                # 2. Additional memories from graph - fetch by id
                                 extra_ids = [mid for mid in expanded.get("memory_ids", []) if mid not in result_ids]
                                 if extra_ids:
                                     extra_texts = []
@@ -204,13 +207,32 @@ async def process_run(run_id: str, query: str):
                                         for f in expanded["user_facts"][:5]
                                     )
                                     memory_context += f"\nUSER FACTS (from knowledge graph): {facts_str}\n"
+                            # Entity-first path: query mentions (e.g. "John", "office") -> Neo4j memories
+                            import re
+                            _stop = {
+                                "the", "a", "an", "is", "are", "was", "were", "do", "does", "did",
+                                "you", "your", "have", "has", "had", "any", "about", "of", "our",
+                                "to", "what", "we", "in", "with", "from", "for", "and", "or", "but",
+                                "so", "how", "when", "where", "why", "this", "that", "these", "those",
+                                "can", "could", "would", "should", "me", "my", "at", "next", "week",
+                            }
+                            query_words = [w for w in re.findall(r"\b\w+\b", query) if w.lower() not in _stop and len(w) > 1]
+                            if query_words:
+                                entity_first_ids = kg.get_memory_ids_for_entity_names(get_user_id() or "", query_words)
+                                entity_first_texts = []
+                                for mid in entity_first_ids[:5]:
+                                    if mid not in result_ids:
+                                        result_ids.add(mid)
+                                        m = remme_store.get(mid)
+                                        if m and m.get("text"):
+                                            entity_first_texts.append(f"- {m['text']} (entity-matched)")
+                                if entity_first_texts:
+                                    memory_context += "\nMEMORIES BY ENTITY (from knowledge graph):\n" + "\n".join(entity_first_texts[:3]) + "\n"
                     except Exception:
                         pass
-                    print(f" Remme: Injected {len(results)} memories into run {run_id}")
+                    print(f" Remme: Injected {len(results[:top_for_context])} memories into run {run_id}")
             except Exception as e:
                 print(f"⚠️ Remme Retrieval Failed: {e}")
-
-            pdb.set_trace()
             loop = AgentLoop4(multi_mcp=multi_mcp)
             # Register the LOOP instance immediately so we can stop it
             active_loops[run_id] = loop

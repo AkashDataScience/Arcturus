@@ -97,7 +97,7 @@ def main() -> int:
                 ok += 1
                 continue
 
-            entity_ids = kg.ingest_memory(
+            result = kg.ingest_memory(
                 memory_id=memory_id,
                 text=text,
                 user_id=user_id,
@@ -108,8 +108,13 @@ def main() -> int:
                 entity_relationships=extracted.get("entity_relationships"),
                 user_facts=extracted.get("user_facts"),
             )
-            if entity_ids:
-                store.update(memory_id, metadata={"entity_ids": entity_ids})
+            entity_ids = result.get("entity_ids", result if isinstance(result, list) else [])
+            entity_labels = result.get("entity_labels", []) if isinstance(result, dict) else []
+            if entity_ids or entity_labels:
+                meta = {"entity_ids": entity_ids}
+                if entity_labels:
+                    meta["entity_labels"] = entity_labels
+                store.update(memory_id, metadata=meta)
             print(f"  [{i+1}/{len(to_process)}] {memory_id[:8]}... -> {len(entity_ids)} entities")
             ok += 1
         except Exception as e:

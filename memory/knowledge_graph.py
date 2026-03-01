@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from core.utils import log_error, log_step
 
@@ -288,15 +288,17 @@ class KnowledgeGraph:
         entities: Optional[List[Dict[str, Any]]] = None,
         entity_relationships: Optional[List[Dict[str, Any]]] = None,
         user_facts: Optional[List[Dict[str, Any]]] = None,
-    ) -> List[str]:
+    ) -> Dict[str, Any]:
         """
         Full ingestion: create Memory, extract/link entities, relationships, user facts.
-        Returns list of entity_ids for Qdrant payload.
+        Returns dict with entity_ids (for Neo4j link) and entity_labels (type, name for Qdrant payload).
         """
+        empty_result: Dict[str, Any] = {"entity_ids": [], "entity_labels": []}
         if not self._enabled:
-            return []
+            return empty_result
         self.create_memory(memory_id, user_id, session_id, category, source)
         entity_ids: List[str] = []
+        entity_labels: List[Dict[str, str]] = []  # [{type, name}] same order as entity_ids
         entity_map: Dict[str, str] = {}  # (type, name) -> entity_id
 
         # Create entities and link to memory
@@ -310,6 +312,7 @@ class KnowledgeGraph:
                 entity_map[key] = self.get_or_create_entity(etype, name)
             eid = entity_map[key]
             entity_ids.append(eid)
+            entity_labels.append({"type": etype, "name": name})
             self.link_memory_to_entity(memory_id, eid)
 
         # Entity-entity relationships
@@ -345,7 +348,16 @@ class KnowledgeGraph:
                 source_memory_ids=[memory_id],
             )
 
-        return list(dict.fromkeys(entity_ids))  # preserve order, dedupe
+        # Dedupe entity_ids while preserving order; keep corresponding labels (first occurrence)
+        seen: Set[str] = set()
+        deduped_ids: List[str] = []
+        deduped_labels: List[Dict[str, str]] = []
+        for eid, label in zip(entity_ids, entity_labels):
+            if eid not in seen:
+                seen.add(eid)
+                deduped_ids.append(eid)
+                deduped_labels.append(label)
+        return {"entity_ids": deduped_ids, "entity_labels": deduped_labels}
 
     def get_entities_for_memory(self, memory_id: str) -> List[Dict[str, Any]]:
         """Get entities linked to a memory."""
@@ -410,6 +422,31 @@ class KnowledgeGraph:
             "memory_ids": list(memory_ids),
             "user_facts": user_facts,
         }
+
+    def get_memory_ids_for_entity_names(
+        self,
+        user_id: str,
+        names: List[str],
+    ) -> List[str]:
+        """
+        Entity-first retrieval: find memory ids that contain entities whose name
+        matches any of the given names (case-insensitive). Scoped to user.
+        Used when semantic search returns little; pull memories by entity mention.
+        """
+        if not self._enabled or not names:
+            return []
+        names_lower = [n.strip().lower() for n in names if n and n.strip()]
+        if not names_lower:
+            return []
+        records = self._run_query(
+            """
+            MATCH (u:User {user_id: $user_id})-[:HAS_MEMORY]->(m:Memory)-[:CONTAINS_ENTITY]->(e:Entity)
+            WHERE ANY(n IN $names_lower WHERE toLower(e.name) = n OR toLower(e.name) CONTAINS n)
+            RETURN DISTINCT m.id AS memory_id
+            """,
+            {"user_id": user_id, "names_lower": names_lower},
+        )
+        return [r["memory_id"] for r in records if r.get("memory_id")]
 
 
 # Singleton for app use
