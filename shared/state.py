@@ -155,6 +155,7 @@ def get_message_bus():
         from gateway.router import MessageRouter, create_mock_agent
         from channels.telegram import TelegramAdapter
         from channels.webchat import WebChatAdapter
+        from channels.mobile import MobileAdapter
         formatter = MessageFormatter()
         router = MessageRouter(agent_factory=create_mock_agent, formatter=formatter)
         _message_bus = MessageBus(
@@ -163,6 +164,7 @@ def get_message_bus():
             adapters={
                 "telegram": TelegramAdapter(),
                 "webchat": WebChatAdapter(),
+                "mobile": MobileAdapter(),
             },
         )
     return _message_bus
