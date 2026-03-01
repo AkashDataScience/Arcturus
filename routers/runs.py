@@ -170,6 +170,33 @@ async def process_run(run_id: str, query: str):
                                 entity_ids.extend(r.get("entity_ids") or [])
                             if entity_ids:
                                 expanded = kg.expand_from_entities(entity_ids, user_id=get_user_id())
+                                result_ids = {r["id"] for r in results}
+                                # 1. Entities and relationships (e.g. "John (Person) related to Google (Company)")
+                                if expanded.get("entities"):
+                                    ent_parts = []
+                                    for e in expanded["entities"][:6]:
+                                        name = e.get("name", "")
+                                        etype = e.get("type", "Entity")
+                                        related = e.get("related", [])[:3]
+                                        if name:
+                                            if related:
+                                                rel_names = [r.get("name", "") for r in related if r.get("name")]
+                                                ent_parts.append(f"  {name} ({etype}) -> {', '.join(rel_names)}")
+                                            else:
+                                                ent_parts.append(f"  {name} ({etype})")
+                                    if ent_parts:
+                                        memory_context += "\nRELATED ENTITIES (from knowledge graph):\n" + "\n".join(ent_parts) + "\n"
+                                # 2. Additional memories from graph (not in top-k search) - fetch by id
+                                extra_ids = [mid for mid in expanded.get("memory_ids", []) if mid not in result_ids]
+                                if extra_ids:
+                                    extra_texts = []
+                                    for mid in extra_ids[:3]:
+                                        m = remme_store.get(mid)
+                                        if m and m.get("text"):
+                                            extra_texts.append(f"- {m['text']} (graph-expanded)")
+                                    if extra_texts:
+                                        memory_context += "\nADDITIONAL RELEVANT MEMORIES (from graph):\n" + "\n".join(extra_texts) + "\n"
+                                # 3. User-centric facts
                                 if expanded.get("user_facts"):
                                     facts_str = ", ".join(
                                         f"{f.get('rel_type', '')}({f.get('name', '')})"
