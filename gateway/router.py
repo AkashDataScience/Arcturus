@@ -327,7 +327,7 @@ async def create_runs_agent(session_id: str) -> Any:
             run_id = f"nexus_{int(_dt.now().timestamp())}"
             contextual_query = self._build_contextual_query(envelope.content)
             print(f"\n{'='*60}")
-            print(f"[NEXUS] create_runs_agent.process_message called")
+            print("[NEXUS] create_runs_agent.process_message called")
             print(f"[NEXUS]   run_id   = {run_id}")
             print(f"[NEXUS]   channel  = {envelope.channel}")
             print(f"[NEXUS]   sender   = {envelope.sender_id}")

@@ -2,18 +2,18 @@
 
 Tests cover:
 - Factory returns an object with a process_message method
-- process_message happy path: POST run → poll → completed with output
-- process_message when run fails: status=failed → error reply
-- process_message timeout: run stays "running" past deadline → timeout reply
-- process_message when POST /api/runs itself errors → error reply
+- process_message happy path: process_run → _fetch_run_output → completed with output
+- process_message when run fails: no output → failure reply
+- process_message when process_run raises → error reply
+- process_message when _fetch_run_output returns no output → failed reply
 
-All network calls are mocked via unittest.mock. No real server is needed.
+All calls are mocked via unittest.mock. No real server is needed.
 """
 
 import asyncio
+import sys
+from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import httpx
 
 from gateway.envelope import MessageEnvelope
 from gateway.router import create_runs_agent
@@ -34,24 +34,27 @@ def _make_envelope(text: str = "What is the capital of France?") -> MessageEnvel
     )
 
 
-def _mock_post_response(run_id: str = "1700000042") -> MagicMock:
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json.return_value = {"id": run_id, "status": "starting"}
-    resp.raise_for_status = MagicMock()
-    return resp
+def _ensure_routers_runs_mock(mock_process_run: AsyncMock):
+    """Ensure `from routers.runs import process_run` resolves to our mock.
+
+    RunsAgentAdapter.process_message does a lazy import:
+        from routers.runs import process_run
+    We inject a fake module into sys.modules so the import succeeds without
+    pulling in the real routers.runs (which has heavy transitive deps).
+    """
+    fake_mod = ModuleType("routers.runs")
+    fake_mod.process_run = mock_process_run  # type: ignore[attr-defined]
+    # Ensure parent package exists
+    if "routers" not in sys.modules:
+        routers_pkg = ModuleType("routers")
+        routers_pkg.__path__ = []  # type: ignore[attr-defined]
+        sys.modules["routers"] = routers_pkg
+    sys.modules["routers.runs"] = fake_mod
 
 
-def _mock_output_response(
-    run_id: str = "1700000042",
-    status: str = "completed",
-    output: str = "Paris is the capital of France.",
-) -> MagicMock:
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json.return_value = {"run_id": run_id, "status": status, "output": output}
-    resp.raise_for_status = MagicMock()
-    return resp
+def _cleanup_routers_runs():
+    """Remove the fake routers.runs from sys.modules."""
+    sys.modules.pop("routers.runs", None)
 
 
 # ---------------------------------------------------------------------------
@@ -71,52 +74,64 @@ def test_create_runs_agent_returns_object():
 
 
 # ---------------------------------------------------------------------------
-# Test 2: happy path — POST run → poll once → completed
+# Test 2: happy path — process_run succeeds, _fetch_run_output returns output
 # ---------------------------------------------------------------------------
 
 
 def test_process_message_success():
     """process_message returns reply with status=completed when run succeeds."""
-    run_id = "1700000042"
 
     async def _run():
         agent = await create_runs_agent("session-001")
         envelope = _make_envelope()
 
-        post_resp = _mock_post_response(run_id)
-        output_resp = _mock_output_response(run_id, "completed", "Paris is the capital of France.")
+        mock_run = AsyncMock()
+        mock_fetch = AsyncMock(return_value={
+            "run_id": "nexus_test",
+            "status": "completed",
+            "output": "Paris is the capital of France.",
+        })
 
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=post_resp), \
-             patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=output_resp):
-            result = await agent.process_message(envelope)
+        _ensure_routers_runs_mock(mock_run)
+        try:
+            with patch("gateway.router._fetch_run_output", mock_fetch):
+                result = await agent.process_message(envelope)
+        finally:
+            _cleanup_routers_runs()
 
         assert result["status"] == "completed"
         assert "Paris" in result["reply"]
-        assert result["run_id"] == run_id
+        assert result["run_id"].startswith("nexus_")
+        mock_run.assert_awaited_once()
 
     asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------
-# Test 3: run fails → error reply
+# Test 3: run fails → no output → failure reply
 # ---------------------------------------------------------------------------
 
 
 def test_process_message_run_failure():
-    """process_message returns a failure reply when run status=failed."""
-    run_id = "1700000043"
+    """process_message returns a failure reply when _fetch_run_output has no output."""
 
     async def _run():
         agent = await create_runs_agent("session-002")
         envelope = _make_envelope("crash this")
 
-        post_resp = _mock_post_response(run_id)
-        failed_resp = _mock_output_response(run_id, "failed", None)
-        failed_resp.json.return_value = {"run_id": run_id, "status": "failed", "output": None}
+        mock_run = AsyncMock()
+        mock_fetch = AsyncMock(return_value={
+            "run_id": "nexus_test",
+            "status": "failed",
+            "output": None,
+        })
 
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=post_resp), \
-             patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=failed_resp):
-            result = await agent.process_message(envelope)
+        _ensure_routers_runs_mock(mock_run)
+        try:
+            with patch("gateway.router._fetch_run_output", mock_fetch):
+                result = await agent.process_message(envelope)
+        finally:
+            _cleanup_routers_runs()
 
         assert result["status"] == "failed"
         assert isinstance(result["reply"], str)
@@ -126,23 +141,24 @@ def test_process_message_run_failure():
 
 
 # ---------------------------------------------------------------------------
-# Test 4: POST /api/runs itself errors → graceful error reply
+# Test 4: process_run itself errors → graceful error reply
 # ---------------------------------------------------------------------------
 
 
 def test_process_message_post_error():
-    """process_message returns error reply when POST /api/runs raises."""
+    """process_message returns error reply when process_run raises."""
 
     async def _run():
         agent = await create_runs_agent("session-003")
         envelope = _make_envelope("hello")
 
-        with patch(
-            "httpx.AsyncClient.post",
-            new_callable=AsyncMock,
-            side_effect=httpx.RequestError("connection refused"),
-        ):
+        mock_run = AsyncMock(side_effect=Exception("connection refused"))
+
+        _ensure_routers_runs_mock(mock_run)
+        try:
             result = await agent.process_message(envelope)
+        finally:
+            _cleanup_routers_runs()
 
         assert result["status"] == "error"
         assert isinstance(result["reply"], str)
@@ -152,31 +168,32 @@ def test_process_message_post_error():
 
 
 # ---------------------------------------------------------------------------
-# Test 5: polling times out → timeout reply
+# Test 5: process_run succeeds but no output produced → failed reply
 # ---------------------------------------------------------------------------
 
 
 def test_process_message_timeout():
-    """process_message returns timeout reply when run never completes within deadline."""
-    run_id = "1700000044"
+    """process_message returns failed reply when run produces no output."""
 
     async def _run():
         agent = await create_runs_agent("session-004")
         envelope = _make_envelope("slow query")
 
-        post_resp = _mock_post_response(run_id)
-        running_resp = _mock_output_response(run_id, "running", None)
-        running_resp.json.return_value = {"run_id": run_id, "status": "running", "output": None}
+        mock_run = AsyncMock()
+        mock_fetch = AsyncMock(return_value={
+            "run_id": "nexus_test",
+            "status": "failed",
+            "output": None,
+        })
 
-        import gateway.router as router_mod
+        _ensure_routers_runs_mock(mock_run)
+        try:
+            with patch("gateway.router._fetch_run_output", mock_fetch):
+                result = await agent.process_message(envelope)
+        finally:
+            _cleanup_routers_runs()
 
-        with patch.object(router_mod, "_POLL_TIMEOUT_S", 0.01), \
-             patch.object(router_mod, "_POLL_INTERVAL_S", 0.001), \
-             patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=post_resp), \
-             patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=running_resp):
-            result = await agent.process_message(envelope)
-
-        assert result["status"] == "timeout"
+        assert result["status"] == "failed"
         assert isinstance(result["reply"], str)
         assert len(result["reply"]) > 0
 
