@@ -569,11 +569,12 @@ class AgentLoop4:
                 await asyncio.sleep(0.5)
                 continue
 
-            # Show current state (only when we found work to do)
-            try:
-                console.print(visualizer.get_layout())
-            except Exception as e:
-                console.print(f"[dim]Note: Could not refresh terminal UI: {e}[/dim]")
+            # Show current state (only when we found work to do and verbose is enabled)
+            if settings.get("watchtower", {}).get("verbose_terminal", False):
+                try:
+                    console.print(visualizer.get_layout())
+                except Exception as e:
+                    console.print(f"[dim]Note: Could not refresh terminal UI: {e}[/dim]")
 
             # Mark running
             for step_id in ready_steps:
@@ -664,8 +665,9 @@ class AgentLoop4:
                 context.plan_graph.graph['status'] = 'failed'
                 break
 
-        # Final state: render layout and persist status
-        console.print(visualizer.get_layout())
+        # Final state: render layout if verbose
+        if settings.get("watchtower", {}).get("verbose_terminal", False):
+            console.print(visualizer.get_layout())
         
         # Determine and save final status (stopped/failed/completed)
         if context.stop_requested:

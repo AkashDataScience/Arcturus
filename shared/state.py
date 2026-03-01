@@ -139,25 +139,80 @@ def get_studio_storage():
 # Global settings state
 settings = {}
 
+# mDNS Discovery instance
+_gateway_advertiser = None
+
+def get_gateway_advertiser():
+    """Get the GatewayAdvertiser instance, creating it if needed."""
+    global _gateway_advertiser
+    if _gateway_advertiser is None:
+        from nodes.discovery import GatewayAdvertiser
+        _gateway_advertiser = GatewayAdvertiser()
+    return _gateway_advertiser
+
 # Nexus MessageBus instance — shared across all routers
 _message_bus = None
+
+class RealNexusAgent:
+    """Agent bridge that runs the full AgentLoop4 for Nexus requests."""
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+
+    async def process_message(self, envelope: 'MessageEnvelope') -> dict:
+        from core.loop import AgentLoop4
+        from shared.state import get_multi_mcp
+        
+        loop = AgentLoop4(get_multi_mcp())
+        # Run the full agentic loop
+        context = await loop.run(
+            query=envelope.content,
+            file_manifest=[],
+            globals_schema={},
+            uploaded_files=[],
+            session_id=self.session_id
+        )
+        
+        summary = context.get_execution_summary()
+        # Extract the best possible 'reply' from the final outputs
+        outputs = summary.get("final_outputs", {})
+        reply = outputs.get("final_answer") or outputs.get("markdown_report") or "I've processed your request."
+        
+        # If no specific final answer, try to find any non-empty output
+        if reply == "I've processed your request." and outputs:
+            first_val = next((v for v in outputs.values() if v), None)
+            if first_val:
+                reply = str(first_val)
+
+        return {
+            "status": "processed",
+            "reply": reply,
+            "session_id": self.session_id,
+            "full_summary": summary
+        }
+
+async def create_real_agent(session_id: str) -> RealNexusAgent:
+    """Factory for RealNexusAgent."""
+    return RealNexusAgent(session_id)
 
 def get_message_bus():
     """Get the Nexus MessageBus instance, creating it if needed.
 
-    Wires together: MessageFormatter + MessageRouter (mock agent) +
-    TelegramAdapter + WebChatAdapter.
+    Wires together: MessageFormatter + MessageRouter (REAL agent) +
+    TelegramAdapter + WebChatAdapter + MobileAdapter.
     """
     global _message_bus
     if _message_bus is None:
         from gateway.bus import MessageBus
         from gateway.formatter import MessageFormatter
-        from gateway.router import MessageRouter, create_mock_agent
+        from gateway.router import MessageRouter
         from channels.telegram import TelegramAdapter
         from channels.webchat import WebChatAdapter
         from channels.mobile import MobileAdapter
+        
         formatter = MessageFormatter()
-        router = MessageRouter(agent_factory=create_mock_agent, formatter=formatter)
+        # 🧠 SWAP MOCK FOR REAL AGENT FACTORY
+        router = MessageRouter(agent_factory=create_real_agent, formatter=formatter)
+        
         _message_bus = MessageBus(
             router=router,
             formatter=formatter,

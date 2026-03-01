@@ -231,7 +231,6 @@ class AgentRunner:
                 # 4. Final Prompt Construction
                 full_prompt = f"CURRENT_DATE: {current_date}\n\n{prompt_template.strip()}{user_prefs_text}{profile_context}{episodic_context}{factual_context}{tools_text}\n\n```json\n{json.dumps(input_data, indent=2, default=str)}\n```"
 
-                print(f"🛠️ [DEBUG] Generated Tools Text for {agent_type}:\n{tools_text}\n")
 
                 debug_log_dir = Path(__file__).parent.parent / "memory" / "debug_logs"
                 debug_log_dir.mkdir(parents=True, exist_ok=True)

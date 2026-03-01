@@ -15,12 +15,14 @@ GET  /api/nexus/webchat/messages/{session_id}
 """
 
 import uuid
-from typing import Optional
+import asyncio
+from typing import Optional, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, UploadFile, Form, BackgroundTasks
 from pydantic import BaseModel
 
 from gateway.envelope import MessageEnvelope
+from routers.remme import background_smart_scan
 
 router = APIRouter(prefix="/nexus", tags=["Nexus"])
 
@@ -57,9 +59,9 @@ class MobileInboundRequest(BaseModel):
     """Inbound context from the mobile app."""
 
     session_id: str
-    sender_id: str
-    sender_name: str
     text: str
+    sender_id: str = "mobile-user"
+    sender_name: str = "Mobile User"
     device_type: str = "mobile"
     message_id: Optional[str] = None
 
@@ -70,7 +72,7 @@ class MobileInboundRequest(BaseModel):
 
 
 @router.post("/webchat/inbound")
-async def webchat_inbound(req: WebChatInboundRequest):
+async def webchat_inbound(req: WebChatInboundRequest, background_tasks: BackgroundTasks):
     """Receive a message from the WebChat widget.
 
     Builds a ``MessageEnvelope``, runs it through the bus (agent processing +
@@ -87,6 +89,10 @@ async def webchat_inbound(req: WebChatInboundRequest):
         message_id=req.message_id or str(uuid.uuid4()),
     )
     result = await _get_bus().roundtrip(envelope)
+    
+    # 🧠 Trigger Mnemo Memory Sync
+    background_tasks.add_task(background_smart_scan)
+    
     return result.to_dict()
 
 
@@ -108,7 +114,7 @@ async def webchat_poll(session_id: str):
 
 
 @router.post("/mobile/inbound")
-async def mobile_inbound(req: MobileInboundRequest):
+async def mobile_inbound(req: MobileInboundRequest, background_tasks: BackgroundTasks):
     """Receive a message from the mobile app.
 
     Routes a ``MessageEnvelope`` through the bus with mobile channel identity.
@@ -122,7 +128,60 @@ async def mobile_inbound(req: MobileInboundRequest):
         device_type=req.device_type,
     )
     result = await _get_bus().roundtrip(envelope)
+
+    # 🧠 Trigger Mnemo Memory Sync
+    background_tasks.add_task(background_smart_scan)
+
     return result.to_dict()
+
+
+@router.post("/mobile/voice/inbound")
+async def mobile_voice_inbound(
+    background_tasks: BackgroundTasks,
+    session_id: str = Form("mobile-session-1"),
+    file: Optional[UploadFile] = File(None),
+    text: Optional[str] = Form(None)
+):
+    """Receive a voice clip or transcribed text from the mobile app.
+    
+    If 'text' is provided (client-side STT), it uses it directly.
+    Otherwise, it attempts to transcribe the 'file'.
+    """
+    if text:
+        transcription = text
+        print(f"🎙️ [Nexus] Received direct text from client: '{transcription}'")
+    elif file:
+        # Placeholder for server-side transcription
+        # For now, we still mock it, but we prepare the slot for Whisper/Deepgram
+        transcription = "[Voice Clip Received]"
+        print(f"🎙️ [Nexus] Received audio file: {file.filename}")
+    else:
+        transcription = "..."
+
+    envelope = MessageEnvelope.from_mobile(
+        session_id=session_id,
+        sender_id="mobile-user",
+        sender_name="Mobile User",
+        text=transcription,
+        message_id=str(uuid.uuid4()),
+    )
+    
+    result = await _get_bus().roundtrip(envelope)
+    
+    # Extract the reply text from the agent response
+    reply_text = "Arcturus is listening."
+    if result and result.success:
+        reply_text = result.formatted_text or result.agent_response.get("reply", reply_text)
+
+    # 🧠 Trigger Mnemo Memory Sync
+    background_tasks.add_task(background_smart_scan)
+
+    return {
+        "status": "ok",
+        "transcription": transcription,
+        "reply": reply_text,
+        "session_id": session_id
+    }
 
 
 @router.get("/mobile/messages/{session_id}")

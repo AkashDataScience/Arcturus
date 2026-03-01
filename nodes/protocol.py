@@ -26,6 +26,7 @@ class Capability(str, Enum):
     NOTIFICATIONS = "notifications"
     FILES = "files"
     GPS = "gps"
+    DOCUMENT_SCAN = "document_scan"
 
 
 @dataclass
@@ -75,6 +76,7 @@ class NodeInvocation:
     capability: Capability = Capability.CHAT
     action: str = ""  # e.g., "take_photo", "start_recording"
     params: Dict[str, Any] = field(default_factory=dict)
+    attachment_id: Optional[str] = None  # Reference to binary data in vault/storage
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -84,5 +86,6 @@ class NodeInvocation:
             "capability": self.capability.value,
             "action": self.action,
             "params": self.params,
+            "attachment_id": self.attachment_id,
             "timestamp": self.timestamp,
         }

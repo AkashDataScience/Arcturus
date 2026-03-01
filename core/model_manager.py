@@ -244,40 +244,59 @@ class ModelManager:
 
 
     async def _gemini_generate(self, prompt: str) -> str:
-        await self._wait_for_rate_limit()
-        try:
-            # ✅ CORRECT: Use synchronous SDK client in thread to bypass aiohttp/DNS issues common on macOS
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.model_info["model"],
-                contents=prompt
-            )
-            return response.text.strip()
+        max_retries = 3
+        base_delay = 1.0
 
-        except ServerError as e:
-            # ✅ FIXED: Raise the exception instead of returning it
-            raise e
-        except Exception as e:
-            # ✅ Handle other potential errors
-            raise RuntimeError(f"Gemini generation failed: {str(e)}")
+        for attempt in range(max_retries):
+            await self._wait_for_rate_limit()
+            try:
+                # ✅ CORRECT: Use synchronous SDK client in thread to bypass aiohttp/DNS issues common on macOS
+                response = await asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.model_info["model"],
+                    contents=prompt
+                )
+                return response.text.strip()
+
+            except ServerError as e:
+                # If it's a 503 error, wait and retry
+                if "503" in str(e) and attempt < max_retries - 1:
+                    sleep_time = base_delay * (2 ** attempt)
+                    print(f"[ModelManager] Gemini 503 Server Error. Retrying in {sleep_time}s... (Attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(sleep_time)
+                    continue
+                # If out of retries or it's a different server error, raise
+                raise e
+            except Exception as e:
+                # ✅ Handle other potential errors
+                raise RuntimeError(f"Gemini generation failed: {str(e)}")
 
     async def _gemini_generate_content(self, contents: list) -> str:
         """Generate content with support for text and images using Gemini SDK"""
-        try:
-            # ✅ Use synchronous SDK client in thread (text + images)
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.model_info["model"],
-                contents=contents
-            )
-            return response.text.strip()
+        max_retries = 3
+        base_delay = 1.0
 
-        except ServerError as e:
-            # ✅ FIXED: Raise the exception instead of returning it
-            raise e
-        except Exception as e:
-            # ✅ Handle other potential errors
-            raise RuntimeError(f"Gemini content generation failed: {str(e)}")
+        for attempt in range(max_retries):
+            # await self._wait_for_rate_limit() # Handled in caller
+            try:
+                # ✅ Use synchronous SDK client in thread (text + images)
+                response = await asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.model_info["model"],
+                    contents=contents
+                )
+                return response.text.strip()
+
+            except ServerError as e:
+                if "503" in str(e) and attempt < max_retries - 1:
+                    sleep_time = base_delay * (2 ** attempt)
+                    print(f"[ModelManager] Gemini Multimodal 503 Error. Retrying in {sleep_time}s... (Attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(sleep_time)
+                    continue
+                raise e
+            except Exception as e:
+                # ✅ Handle other potential errors
+                raise RuntimeError(f"Gemini content generation failed: {str(e)}")
 
     async def _ollama_generate(self, prompt: str) -> str:
         try:

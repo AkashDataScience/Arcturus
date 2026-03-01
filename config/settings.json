@@ -1,6 +1,7 @@
 {
   "watchtower": {
-    "enabled": true,
+    "enabled": false,
+    "verbose_terminal": false,
     "mongodb_uri": "mongodb://localhost:27017",
     "jaeger_endpoint": "http://localhost:4318/v1/traces"
   },

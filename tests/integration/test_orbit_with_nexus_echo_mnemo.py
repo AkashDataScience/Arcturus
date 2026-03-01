@@ -30,7 +30,9 @@ def test_02_acceptance_and_integration_files_exist() -> None:
 
 def test_03_baseline_script_exists_and_is_executable() -> None:
     assert BASELINE_SCRIPT.exists(), "Missing baseline script scripts/test_all.sh"
-    assert BASELINE_SCRIPT.stat().st_mode & 0o111, "scripts/test_all.sh must be executable"
+    import sys
+    if sys.platform != "win32":
+        assert BASELINE_SCRIPT.stat().st_mode & 0o111, "scripts/test_all.sh must be executable"
 
 
 def test_04_project_ci_check_is_wired_in_workflow() -> None:

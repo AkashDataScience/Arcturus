@@ -18,16 +18,22 @@ class MongoDBSpanExporter(SpanExporter):
     """
 
     def __init__(self, mongodb_uri: str, database: str = "watchtower", collection: str = "spans"):
-        self.client = MongoClient(mongodb_uri)
-        self.collection = self.client[database][collection]
-        self._ensure_indexes()
+        try:
+            self.client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=2000)
+            self.collection = self.client[database][collection]
+            self._ensure_indexes()
+            self.active = True
+        except Exception as e:
+            print(f"⚠️ [Watchtower] MongoDB tracing disabled: {e}")
+            self.active = False
 
     def _ensure_indexes(self):
         """Create indexes for trace_id, run_id, session_id, and time-range queries."""
-        self.collection.create_index("trace_id")
-        self.collection.create_index("attributes.run_id")
-        self.collection.create_index("attributes.session_id")
-        self.collection.create_index([("start_time", -1)])
+        if not hasattr(self, 'active') or self.active:
+            self.collection.create_index("trace_id")
+            self.collection.create_index("attributes.run_id")
+            self.collection.create_index("attributes.session_id")
+            self.collection.create_index([("start_time", -1)])
 
     def export(self, spans: list[ReadableSpan]) -> SpanExportResult:
         """Convert OTel spans to MongoDB documents and insert."""
@@ -44,8 +50,11 @@ class MongoDBSpanExporter(SpanExporter):
                 "attributes": {k: str(v) for k, v in span.attributes.items()},
                 "status": "error" if span.status.is_ok is False else "ok",
             })
-        if docs:
-            self.collection.insert_many(docs)
+        if docs and self.active:
+            try:
+                self.collection.insert_many(docs)
+            except Exception:
+                pass
         return SpanExportResult.SUCCESS
 
     def shutdown(self):

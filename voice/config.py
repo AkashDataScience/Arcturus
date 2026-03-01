@@ -10,7 +10,7 @@ VOICE_CONFIG = {
 
     # Wake engine selection
     # Options: "porcupine", "openwakeword", "pocketsphinx"
-    "engine": "porcupine",
+    "engine": "pocketsphinx",
     "wake_word": "Hey Arcturus",
 
     # -----------------------------

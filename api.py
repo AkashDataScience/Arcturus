@@ -154,13 +154,38 @@ async def lifespan(app: FastAPI):
     # 🧠 Start Smart Sync in background
     asyncio.create_task(background_smart_scan())
     
+    # 📡 Start mDNS discovery advertisement
+    from shared.state import get_gateway_advertiser, get_message_bus
+    await get_gateway_advertiser().start()
+
+    # 🔍 Diagnostic Self-Test (MessageBus)
+    try:
+        from gateway.envelope import MessageEnvelope
+        test_envelope = MessageEnvelope.from_mobile(
+            session_id="self-test",
+            sender_id="diag",
+            sender_name="Diagnostics",
+            text="Ping",
+            message_id="diag-1"
+        )
+        test_bus = get_message_bus()
+        test_result = await test_bus.roundtrip(test_envelope)
+        if test_result.success:
+            reply = test_result.agent_response.get("reply", "No reply")
+            print(f"✅ [Diagnostics] MessageBus roundtrip SUCCESS: {reply}")
+        else:
+            print(f"❌ [Diagnostics] MessageBus roundtrip FAILED: {test_result.error}")
+    except Exception as diag_err:
+        print(f"⚠️ [Diagnostics] Self-test logic error: {diag_err}")
+    
     yield
     
     print("🛑 API Shutting down...")
     from ops.tracing import shutdown_tracing
     shutdown_tracing()
-    from shared.state import get_canvas_runtime
+    from shared.state import get_canvas_runtime, get_gateway_advertiser
     get_canvas_runtime().save_snapshots()
+    await get_gateway_advertiser().stop()
     persistence_manager.save_snapshot()
     await multi_mcp.stop()
     # Stop the voice pipeline explicitly so native audio threads don't
@@ -181,8 +206,14 @@ app = FastAPI(lifespan=lifespan)
 # Enable CORS for Frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "app://."], # Explicitly allow frontend
-    allow_origin_regex=r"http://localhost:(517\d|5555)", 
+    allow_origins=[
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
