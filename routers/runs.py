@@ -148,103 +148,15 @@ async def process_run(run_id: str, query: str):
     with run_span(run_id, query or "") as span:
         try:
             # 1. RETRIEVE MEMORIES (Remme)
-            # Search for past relevant facts to inject into this run
+            # Orchestration: memory_retriever handles semantic recall, entity recall, graph expansion, merge
             memory_context = ""
-            context = None  # Initialize for safe access in finally block
             results = []
+            context = None  # Initialize for safe access in finally block
             try:
-                from memory.user_id import get_user_id
-                emb = get_embedding(query, task_type="search_query")
-                # Smarter search (P11 9.1): fetch more candidates (k=10), use top 3 for direct context,
-                # use all 10 for entity expansion; entity-first path adds memories by entity name.
-                results = remme_store.search(emb, query_text=query, k=10)
-                top_for_context = 3
-                result_ids = {r["id"] for r in results[:top_for_context]}
-                if results:
-                    memory_str = "\n".join(
-                        [f"- {r['text']} (Confidence: {r.get('score', 0):.2f})" for r in results[:top_for_context]]
-                    )
-                    memory_context = f"PREVIOUS MEMORIES ABOUT USER:\n{memory_str}\n"
-                    # Neo4j: use entity_ids from all k results (not just top 3) for graph expansion
-                    try:
-                        from memory.knowledge_graph import get_knowledge_graph
-                        kg = get_knowledge_graph()
-                        if kg and kg.enabled:
-                            entity_ids = []
-                            for r in results:
-                                entity_ids.extend(r.get("entity_ids") or [])
-                            if entity_ids:
-                                expanded = kg.expand_from_entities(entity_ids, user_id=get_user_id())
-                                # 1. Entities and relationships
-                                if expanded.get("entities"):
-                                    ent_parts = []
-                                    for e in expanded["entities"][:6]:
-                                        name = e.get("name", "")
-                                        etype = e.get("type", "Entity")
-                                        related = e.get("related", [])[:3]
-                                        if name:
-                                            if related:
-                                                rel_names = [r.get("name", "") for r in related if r.get("name")]
-                                                ent_parts.append(f"  {name} ({etype}) -> {', '.join(rel_names)}")
-                                            else:
-                                                ent_parts.append(f"  {name} ({etype})")
-                                    if ent_parts:
-                                        memory_context += "\nRELATED ENTITIES (from knowledge graph):\n" + "\n".join(ent_parts) + "\n"
-                                # 2. Additional memories from graph - fetch by id
-                                extra_ids = [mid for mid in expanded.get("memory_ids", []) if mid not in result_ids]
-                                if extra_ids:
-                                    extra_texts = []
-                                    for mid in extra_ids[:3]:
-                                        m = remme_store.get(mid)
-                                        if m and m.get("text"):
-                                            extra_texts.append(f"- {m['text']} (graph-expanded)")
-                                    if extra_texts:
-                                        memory_context += "\nADDITIONAL RELEVANT MEMORIES (from graph):\n" + "\n".join(extra_texts) + "\n"
-                                # 3. User-centric facts
-                                if expanded.get("user_facts"):
-                                    facts_str = ", ".join(
-                                        f"{f.get('rel_type', '')}({f.get('name', '')})"
-                                        for f in expanded["user_facts"][:5]
-                                    )
-                                    memory_context += f"\nUSER FACTS (from knowledge graph): {facts_str}\n"
-                            # Entity-first path: NER on query -> resolve against graph (exact + fuzzy) -> expand
-                            _entity_first_ids: list[str] = []
-                            try:
-                                from memory.entity_extractor import EntityExtractor
-                                entities = EntityExtractor().extract_from_query(query)
-                                if entities:
-                                    resolved_ids = kg.resolve_entity_candidates(get_user_id() or "", entities, fuzzy_threshold=0.85)
-                                    if resolved_ids:
-                                        expanded_ef = kg.expand_from_entities(resolved_ids, user_id=get_user_id(), depth=2)
-                                        _entity_first_ids = expanded_ef.get("memory_ids", [])
-                            except Exception:
-                                pass
-                            # Fallback: stop-word heuristic if NER returns nothing
-                            if not _entity_first_ids:
-                                import re
-                                _stop = {
-                                    "the", "a", "an", "is", "are", "was", "were", "do", "does", "did",
-                                    "you", "your", "have", "has", "had", "any", "about", "of", "our",
-                                    "to", "what", "we", "in", "with", "from", "for", "and", "or", "but",
-                                    "so", "how", "when", "where", "why", "this", "that", "these", "those",
-                                    "can", "could", "would", "should", "me", "my", "at", "next", "week",
-                                }
-                                query_words = [w for w in re.findall(r"\b\w+\b", query) if w.lower() not in _stop and len(w) > 1]
-                                if query_words:
-                                    _entity_first_ids = kg.get_memory_ids_for_entity_names(get_user_id() or "", query_words)
-                            if _entity_first_ids:
-                                entity_first_texts = []
-                                for mid in _entity_first_ids[:5]:
-                                    if mid not in result_ids:
-                                        result_ids.add(mid)
-                                        m = remme_store.get(mid)
-                                        if m and m.get("text"):
-                                            entity_first_texts.append(f"- {m['text']} (entity-matched)")
-                                if entity_first_texts:
-                                    memory_context += "\nMEMORIES BY ENTITY (from knowledge graph):\n" + "\n".join(entity_first_texts[:3]) + "\n"
-                    except Exception:
-                        pass
-                    print(f" Remme: Injected {len(results[:top_for_context])} memories into run {run_id}")
+                from memory.memory_retriever import retrieve
+                memory_context, results = retrieve(query)
+                if memory_context:
+                    print(f" Remme: Injected memory context into run {run_id}")
             except Exception as e:
                 print(f"⚠️ Remme Retrieval Failed: {e}")
             loop = AgentLoop4(multi_mcp=multi_mcp)
