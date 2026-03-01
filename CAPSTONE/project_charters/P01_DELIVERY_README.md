@@ -2,6 +2,16 @@
 
 ## 1. Scope Delivered
 
+**Week 3+ - End-to-End Agent Wiring & Hardening (2026-03-01):**
+- ✅ **gateway/router.py**: Refactored `create_runs_agent` from HTTP-based (POST /api/runs + poll GET) to **in-process** — calls `process_run()` directly, avoiding self-request deadlocks in single-process uvicorn
+- ✅ **gateway/router.py**: `_fetch_run_output()` reads session summaries from disk (`memory/session_summaries_index/session_{run_id}.json`) via `nx.node_link_data()` format
+- ✅ **gateway/router.py**: `RunsAgentAdapter` maintains rolling in-memory conversation history (last 10 user+assistant turns), prepended as `CONVERSATION HISTORY` block to each query for follow-up support
+- ✅ **channels/telegram.py**: `_split_message()` — splits replies at Telegram's 4096-char limit at paragraph/sentence/word boundaries; MarkdownV2 escaping
+- ✅ **channels/telegram.py**: `TelegramAdapter._poll_loop()` + `_handle_update()` — long-polling getUpdates loop with `set_bus_callback()` wired in `shared/state.py`
+- ✅ **core/loop.py**: Null `plan_graph` guard — handles `plan_graph: null` from PlannerAgent for simple queries without crashing
+- ✅ **routers/remme.py**: Ollama embedding fixes — corrected URL construction and model name for local Ollama embeddings
+- ✅ **tests/test_runs_agent_factory.py**: Rewrote 5 tests — replaced httpx mocks with `sys.modules` injection for `routers.runs` + `patch("gateway.router._fetch_run_output")`, fixing 3 CI failures + 1 lint error (F541)
+
 **Week 3+ - Matrix Adapter (Channel 10/10):**
 - ✅ **channels/matrix.py**: MatrixAdapter — polling-based inbound via `GET /_matrix/client/v3/sync`; outbound via `PUT /_matrix/client/v3/rooms/{roomId}/send/m.room.message/{txnId}`; `set_bus_callback()` for inbound dispatch; skips own messages, non-m.text events, empty body; no sidecar needed
 - ✅ **gateway/envelope.py**: `from_matrix()` constructor — room_id, sender_id, homeserver extracted from sender_id, is_direct flag
@@ -108,7 +118,7 @@
 - `.env.example`: All channel env-var sections added
 - `config/channels.yaml`: All 10 channel blocks present
 
-**Key architectural flow (Week 3 — real agent):**
+**Key architectural flow (in-process agent, 2026-03-01):**
 ```
 Channel inbound → MessageEnvelope → bus.roundtrip()
                                         ↓
@@ -116,16 +126,18 @@ Channel inbound → MessageEnvelope → bus.roundtrip()
                                         ↓
                      RunsAgentAdapter.process_message(envelope)
                                         ↓
-                    POST /api/runs  {"query": envelope.content}
+          _build_contextual_query() (prepend conversation history)
                                         ↓
-                    poll GET /api/runs/{run_id}/output  (2s, 120s timeout)
+                    process_run(run_id, query)  [IN-PROCESS, no HTTP]
+                                        ↓
+                    _fetch_run_output(run_id)  [read session JSON from disk]
                                         ↓
                     return {"reply": output_str, ...}
                                         ↓
                     ChannelAdapter.send_message() → delivered to user
 ```
 
-**Known limitation:** Each `POST /api/runs` starts a fresh AgentLoop4 — no cross-message conversation memory. Multi-turn context is lost between messages. Requires persistent session threading in the runs API (P15 scope).
+**Known limitation:** Each message starts a fresh AgentLoop4 run, but `RunsAgentAdapter` maintains rolling in-memory conversation history (last 10 user+assistant turns). Full persistent session threading requires deeper runs-API changes (P15 scope).
 
 ---
 
@@ -163,7 +175,8 @@ GET  /api/runs/{run_id}/output           [NEW — Week 3]
 ```
 
 **New module APIs:**
-- `create_runs_agent(session_id) -> RunsAgentAdapter` — real AgentLoop4 factory
+- `create_runs_agent(session_id) -> RunsAgentAdapter` — real AgentLoop4 factory (in-process, no HTTP)
+- `_fetch_run_output(run_id) -> dict` — reads session summary from disk
 - `_extract_output_str(data: dict) -> str` — shared output extraction from session graph
 - `MessageEnvelope.from_whatsapp(...)` — WhatsApp envelope constructor
 
@@ -179,7 +192,7 @@ GET  /api/runs/{run_id}/output           [NEW — Week 3]
 
 ## 5. Test Evidence
 
-**Automated test suite: 118 tests (P01 scope), 463 total passed (2026-02-28):**
+**Automated test suite: 118 tests (P01 scope), 469 total passed (2026-03-01):**
 
 | File | Tests | What it covers |
 |------|-------|----------------|
@@ -194,7 +207,7 @@ GET  /api/runs/{run_id}/output           [NEW — Week 3]
 | `tests/test_discord_roundtrip.py` | 8 | Discord sig/PING/slash/relay/affinity |
 | `tests/test_whatsapp_roundtrip.py` | 8 | WhatsApp HMAC/roundtrip/group/bridge |
 | `tests/test_get_run_output.py` | 3 | GET /api/runs/{id}/output endpoint |
-| `tests/test_runs_agent_factory.py` | 5 | create_runs_agent factory (mocked HTTP) |
+| `tests/test_runs_agent_factory.py` | 5 | create_runs_agent factory (mocked in-process calls via sys.modules injection) |
 | `tests/test_googlechat_roundtrip.py` | 8 | Google Chat send/error/network/no-creds/bus/affinity/webhook/lifecycle |
 | `tests/test_imessage_roundtrip.py` | 11 | iMessage send/error/network/sig, roundtrip, affinity, webhook×3 |
 | `tests/test_teams_roundtrip.py` | 11 | Teams send/error/network/token, roundtrip, affinity, webhook×3 |
@@ -216,9 +229,14 @@ uv run python -m pytest tests/acceptance/p01_nexus/ \
 ```
 
 **Live Slack integration verified (Week 3 — real agent):**
-- Messages routed via `create_runs_agent` → `POST /api/runs` → AgentLoop4 ✅
+- Messages routed via `create_runs_agent` → `process_run()` (in-process) → AgentLoop4 ✅
 - `group_activation: always-on` required (Slack sends `<@USER_ID>` not `@botname`) ✅
-- Reply polled from `GET /api/runs/{id}/output` → delivered back to Slack ✅
+- Reply read from `_fetch_run_output()` (disk) → delivered back to Slack ✅
+
+**Live Telegram integration verified (2026-03-01 — real agent):**
+- TelegramAdapter._poll_loop() → bus.roundtrip() → AgentLoop4 → reply via sendMessage ✅
+- Conversation history maintained across messages (10-turn rolling window) ✅
+- Long replies auto-chunked at 4096-char Telegram limit ✅
 
 **Live Slack integration verified (Week 2 — mock agent):**
 - "hello Arcturus" → reply `[Session C04KYFS5DV2] Processed: hello Arcturus` ✅
@@ -230,7 +248,7 @@ uv run python -m pytest tests/acceptance/p01_nexus/ \
 
 **Command:** `uv run python -m pytest tests/ --ignore=tests/stress -q`
 
-**Status:** ✅ **463 passed, 2 skipped** (2026-02-28)
+**Status:** ✅ **469 passed, 2 skipped** (2026-03-01)
 
 P01 changes are fully additive and non-breaking:
 - All new code in `channels/`, `gateway/`, `routers/nexus.py` is isolated
@@ -267,7 +285,7 @@ P01 changes are fully additive and non-breaking:
 - ✅ **All 10 channel adapters complete** — P01 channel scope fully delivered
 
 **Remaining (out-of-P01-scope):**
-- **Cross-message memory**: Fresh AgentLoop4 per message — no multi-turn context (P15 scope)
+- **Cross-message memory**: Fresh AgentLoop4 per message — in-memory rolling history (10 turns) provides short-term continuity; persistent cross-session memory requires P15 scope
 - **DM security policy**: Pairing-code flow blocked — no identity layer yet (P12 scope)
 - **Media transcoding**: `MediaAttachment` in envelope; no per-channel format conversion
 
@@ -310,6 +328,17 @@ curl -X POST http://localhost:8000/api/nexus/slack/events \
   -d '{"type":"event_callback","event":{"type":"message","channel":"C04KYFS5DV2","user":"U123","text":"What is 2+2?","ts":"1234567890.123456"}}'
 ```
 
+**Telegram end-to-end demo (real AgentLoop4):**
+```bash
+# Ensure .env has TELEGRAM_TOKEN=<bot-token>
+# Terminal 1 — backend
+uv run uvicorn api:app --reload --port 8000
+
+# Send a message to @dinoblade_bot on Telegram
+# Bot replies via real AgentLoop4 with conversation context
+# Follow-up messages have context from previous turns (10-turn rolling window)
+```
+
 **Full P01 test suite:**
 ```bash
 uv run python -m pytest tests/acceptance/p01_nexus/ \
@@ -318,5 +347,8 @@ uv run python -m pytest tests/acceptance/p01_nexus/ \
   tests/test_webchat_roundtrip.py tests/test_webchat_sse.py \
   tests/test_slack_roundtrip.py tests/test_group_activation.py \
   tests/test_discord_roundtrip.py tests/test_whatsapp_roundtrip.py \
-  tests/test_get_run_output.py tests/test_runs_agent_factory.py -v
+  tests/test_get_run_output.py tests/test_runs_agent_factory.py \
+  tests/test_p01_latency.py tests/test_googlechat_roundtrip.py \
+  tests/test_imessage_roundtrip.py tests/test_teams_roundtrip.py \
+  tests/test_signal_roundtrip.py tests/test_matrix_roundtrip.py -v
 ```
