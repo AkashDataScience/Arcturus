@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from typing import Optional
 from ops.tracing import run_span, agent_execute_node_span
 from opentelemetry.trace import Status, StatusCode
-
+import pdb
 from shared.state import (
     active_loops,
     get_multi_mcp,
@@ -156,6 +156,7 @@ async def process_run(run_id: str, query: str):
             try:
                 emb = get_embedding(query, task_type="search_query")
                 results = remme_store.search(emb, query_text=query, k=3)
+                pdb.set_trace()
                 if results:
                     memory_str = "\n".join([f"- {r['text']} (Confidence: {r.get('score', 0):.2f})" for r in results])
                     memory_context = f"PREVIOUS MEMORIES ABOUT USER:\n{memory_str}\n"
@@ -209,6 +210,7 @@ async def process_run(run_id: str, query: str):
             except Exception as e:
                 print(f"⚠️ Remme Retrieval Failed: {e}")
 
+            pdb.set_trace()
             loop = AgentLoop4(multi_mcp=multi_mcp)
             # Register the LOOP instance immediately so we can stop it
             active_loops[run_id] = loop
@@ -275,6 +277,18 @@ async def process_run(run_id: str, query: str):
                     existing_memories=results
                 )
 
+                def _resolve_memory_id(alias_or_id: str, existing: list) -> Optional[str]:
+                    """Resolve T001-style alias to real Qdrant point ID; pass-through UUIDs/integers."""
+                    if not alias_or_id or not existing:
+                        return alias_or_id
+                    import re
+                    m = re.match(r"^T(\d+)$", str(alias_or_id).strip())
+                    if m:
+                        idx = int(m.group(1)) - 1
+                        if 0 <= idx < len(existing) and existing[idx].get("id"):
+                            return existing[idx]["id"]
+                    return alias_or_id
+
                 if commands:
                     for cmd in commands:
                         if not isinstance(cmd, dict):
@@ -283,7 +297,8 @@ async def process_run(run_id: str, query: str):
 
                         action = cmd.get("action")
                         text = cmd.get("text")
-                        target_id = cmd.get("id")
+                        target_id_raw = cmd.get("id")
+                        target_id = _resolve_memory_id(target_id_raw, results) if target_id_raw else None
 
                         try:
                             if action == "add" and text:
@@ -296,10 +311,10 @@ async def process_run(run_id: str, query: str):
                             elif action == "update" and target_id and text:
                                 emb = get_embedding(text, task_type="search_document")
                                 remme_store.update(target_id, text=text, embedding=emb)
-                                print(f"🔄 Remme: Updated fact {target_id}: {text}")
+                                print(f"🔄 Remme: Updated fact {target_id_raw or target_id}: {text}")
                             elif action == "delete" and target_id:
                                 remme_store.delete(target_id)
-                                print(f"🗑️ Remme: Deleted fact {target_id}")
+                                print(f"🗑️ Remme: Deleted fact {target_id_raw or target_id}")
                         except Exception as e:
                             print(f"❌ Remme Action Failed: {e}")
 

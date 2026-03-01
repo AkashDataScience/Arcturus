@@ -53,10 +53,12 @@ class RemmeExtractor:
         # Add current query
         transcript += f"USER: {query}\n"
         
-        # Format existing memories for the prompt
+        # Format existing memories for the prompt (use short aliases T001, T002 so LLM returns them; backend resolves to real Qdrant IDs)
         memories_str = "NONE"
         if existing_memories:
-            memories_str = "\n".join([f"ID: {m['id']} | Fact: {m['text']}" for m in existing_memories])
+            memories_str = "\n".join(
+                [f"ID: T{i+1:03d} | Fact: {m.get('text', '')}" for i, m in enumerate(existing_memories)]
+            )
 
         # 2. Load extraction prompt (priority: Skill > file > settings)
         base_prompt = None
