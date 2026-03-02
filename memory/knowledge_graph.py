@@ -40,6 +40,13 @@ def _get_neo4j_config() -> Dict[str, str]:
     }
 
 
+def _canonical_name(name: str) -> str:
+    """Normalize entity name for dedupe: lowercase, stripped. Used for composite_key."""
+    if not name or not isinstance(name, str):
+        return ""
+    return name.strip().lower()
+
+
 class KnowledgeGraph:
     """
     Neo4j-backed knowledge graph for Remme memories.
@@ -193,21 +200,39 @@ class KnowledgeGraph:
         )
 
     def get_or_create_entity(self, entity_type: str, name: str) -> str:
-        """Get or create Entity node. Returns entity id (uuid). Deduplicates by composite_key."""
-        composite_key = f"{entity_type}::{name}"
+        """
+        Get or create Entity node. Returns entity id (uuid).
+        Deduplicates by composite_key = type::canonical_name so "Google" and "google" merge.
+        Keeps name as display, canonical_name (lowercase, stripped) for key/dedupe.
+        """
+        display_name = (name or "").strip()
+        canonical = _canonical_name(name)
+        type_normalized = (entity_type or "Concept").strip().lower()
+        composite_key = f"{type_normalized}::{canonical}"
+        if not canonical:
+            return str(uuid.uuid4())  # no valid name
         entity_id = str(uuid.uuid4())
         records = self._run_query(
             """
             MERGE (e:Entity {composite_key: $composite_key})
-            ON CREATE SET e.id = $entity_id, e.type = $entity_type, e.name = $name, e.created_at = datetime()
-            ON MATCH SET e.type = $entity_type, e.name = $name
+            ON CREATE SET
+                e.id = $entity_id,
+                e.type = $entity_type,
+                e.name = $name,
+                e.canonical_name = $canonical_name,
+                e.created_at = datetime()
+            ON MATCH SET
+                e.type = $entity_type,
+                e.name = $name,
+                e.canonical_name = $canonical_name
             RETURN e.id AS id
             """,
             {
                 "composite_key": composite_key,
                 "entity_id": entity_id,
-                "entity_type": entity_type,
-                "name": name,
+                "entity_type": entity_type.strip() or "Concept",
+                "name": display_name or canonical,
+                "canonical_name": canonical,
             },
         )
         if records and records[0].get("id"):
@@ -299,15 +324,17 @@ class KnowledgeGraph:
         self.create_memory(memory_id, user_id, session_id, category, source)
         entity_ids: List[str] = []
         entity_labels: List[Dict[str, str]] = []  # [{type, name}] same order as entity_ids
-        entity_map: Dict[str, str] = {}  # (type, name) -> entity_id
+        entity_map: Dict[Tuple[str, str], str] = {}  # (type_normalized, canonical_name) -> entity_id
 
-        # Create entities and link to memory
+        # Create entities and link to memory (dedupe by canonical key so "Google" and "google" merge)
         for ent in entities or []:
             etype = ent.get("type", "Concept")
             name = ent.get("name", "").strip()
             if not name:
                 continue
-            key = (etype, name)
+            canonical = _canonical_name(name)
+            type_norm = (etype or "Concept").strip().lower()
+            key = (type_norm, canonical)
             if key not in entity_map:
                 entity_map[key] = self.get_or_create_entity(etype, name)
             eid = entity_map[key]
@@ -315,10 +342,16 @@ class KnowledgeGraph:
             entity_labels.append({"type": etype, "name": name})
             self.link_memory_to_entity(memory_id, eid)
 
-        # Entity-entity relationships
+        # Entity-entity relationships (resolve by canonical key)
         for rel in entity_relationships or []:
-            from_key = (rel.get("from_type", "Entity"), rel.get("from_name", ""))
-            to_key = (rel.get("to_type", "Entity"), rel.get("to_name", ""))
+            from_key = (
+                (rel.get("from_type") or "Entity").strip().lower(),
+                _canonical_name(rel.get("from_name", "")),
+            )
+            to_key = (
+                (rel.get("to_type") or "Entity").strip().lower(),
+                _canonical_name(rel.get("to_name", "")),
+            )
             from_id = entity_map.get(from_key)
             to_id = entity_map.get(to_key)
             if from_id and to_id:
@@ -331,14 +364,14 @@ class KnowledgeGraph:
                     source_memory_ids=[memory_id],
                 )
 
-        # User-centric facts
+        # User-centric facts (resolve by canonical key)
         for fact in user_facts or []:
             rel_type = fact.get("rel_type", "KNOWS")
             name = fact.get("name", "").strip()
             etype = fact.get("type", "Concept")
             if not name:
                 continue
-            key = (etype, name)
+            key = ((etype or "Concept").strip().lower(), _canonical_name(name))
             if key not in entity_map:
                 entity_map[key] = self.get_or_create_entity(etype, name)
             self.create_user_entity_relationship(

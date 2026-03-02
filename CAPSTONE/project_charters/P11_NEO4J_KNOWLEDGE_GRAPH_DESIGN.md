@@ -20,7 +20,7 @@ Neo4j stores extracted entities and relationships from Remme memories. It ties t
 | **User** | `id`, `user_id` | Central node; multi-tenant; anchor for derived facts |
 | **Memory** | `id` (Qdrant point id), `category`, `source`, `created_at` | Bridge to Qdrant |
 | **Session** | `id`, `session_id`, `original_query`, `created_at` | Provenance; temporal grouping |
-| **Entity** | `id`, `type`, `name`, `created_at` | Person, Company, Concept, City, Date, etc. |
+| **Entity** | `id`, `type`, `name`, `canonical_name`, `composite_key`, `created_at` | Person, Company, Concept, etc. `name` = display; `canonical_name` = normalized (lowercase, stripped); `composite_key` = `type::canonical_name` for dedupe so "Google" and "google" merge. |
 
 ### Relationships
 
