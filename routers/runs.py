@@ -154,7 +154,10 @@ async def process_run(run_id: str, query: str):
             context = None  # Initialize for safe access in finally block
             try:
                 from memory.memory_retriever import retrieve
-                memory_context, results = retrieve(query)
+                memory_context, results = retrieve(
+                    query,
+                    session_id=run_id,
+                )
                 if memory_context:
                     print(f" Remme: Injected memory context into run {run_id}")
             except Exception as e:

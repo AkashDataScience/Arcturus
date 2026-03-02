@@ -26,12 +26,17 @@ _STOP_WORDS = {
 def retrieve(
     query: str,
     user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
     store: Optional[Any] = None,
     top_for_context: int = 3,
     semantic_k: int = 10,
 ) -> tuple[str, List[Dict[str, Any]]]:
     """
-    Retrieve and merge memories for a query.
+    Retrieve and merge memories for a query, optionally scoped by user and session.
+
+    Session/user scoping supports memory-backed session routing (e.g. Nexus): when
+    session_id (and optionally user_id) are provided, vector search and entity recall
+    are limited to that scope so each conversation gets isolated memory context.
 
     Flow (entity recall runs INDEPENDENTLY of semantic — rescues when vector search returns 0):
     1. Semantic recall (Qdrant vector search) — may return []
@@ -49,10 +54,14 @@ def retrieve(
     user_id = user_id or _get_user_id() or ""
     result_ids: set = set()
     memory_context = ""
-    # pdb.set_trace()
+
+    # Build filter for session-scoped retrieval (memory-backed session routing)
+    filter_metadata: Optional[Dict[str, Any]] = None
+    if session_id:
+        filter_metadata = {"session_id": session_id}
 
     # 1. Semantic recall (may return 0 — graph recall will still run)
-    semantic_results = _semantic_recall(query, store, k=semantic_k)
+    semantic_results = _semantic_recall(query, store, k=semantic_k, filter_metadata=filter_metadata)
     if semantic_results:
         top = semantic_results[:top_for_context]
         result_ids = {r["id"] for r in top}
@@ -105,14 +114,24 @@ def _get_knowledge_graph():
         return None
 
 
-def _semantic_recall(query: str, store: Any, k: int) -> List[Dict[str, Any]]:
-    """Vector search on Qdrant."""
+def _semantic_recall(
+    query: str,
+    store: Any,
+    k: int,
+    filter_metadata: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Vector search on Qdrant, optionally filtered by session_id / user_id."""
     if not store:
         return []
     try:
         from remme.utils import get_embedding
         emb = get_embedding(query, task_type="search_query")
-        return store.search(emb, query_text=query, k=k)
+        return store.search(
+            emb,
+            query_text=query,
+            k=k,
+            filter_metadata=filter_metadata,
+        )
     except Exception as e:
         log_error(f"MemoryRetriever: semantic recall failed: {e}")
         return []
