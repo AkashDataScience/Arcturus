@@ -37,8 +37,18 @@ _CURRENCY_KEYWORDS = {
     "profit",
     "expense",
     "sales",
+    "mrr",
+    "arr",
+    "arpu",
+    "cltv",
+    "ltv",
+    "income",
+    "balance",
+    "salary",
+    "spend",
+    "fee",
 }
-_PERCENT_KEYWORDS = {"pct", "percent", "%", "growth", "rate", "ratio", "margin"}
+_PERCENT_KEYWORDS = {"pct", "percent", "%", "growth", "rate", "ratio", "margin", "churn"}
 _TOTAL_KEYWORDS = {"total", "subtotal", "grand total", "average", "avg"}
 _MONTH_TOKENS = {
     "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
@@ -673,7 +683,15 @@ def export_to_xlsx(content_tree: SheetContentTree, output_path: Path) -> None:
         if tab.column_widths:
             for col_idx, width in enumerate(tab.column_widths, start=1):
                 col_letter = get_column_letter(col_idx)
-                ws.column_dimensions[col_letter].width = max(width / 7, 8)
+                header_len = len(str(tab.headers[col_idx - 1])) + 4 if col_idx - 1 < len(tab.headers) else 10
+                max_data_len = max(
+                    (len(str(row[col_idx - 1]))
+                     for row in tab.rows
+                     if col_idx - 1 < len(row) and row[col_idx - 1] is not None),
+                    default=0,
+                )
+                data_width = min(max_data_len + 2, 50)
+                ws.column_dimensions[col_letter].width = max(width / 7, header_len, data_width, 10)
         else:
             for col_idx, header in enumerate(tab.headers, start=1):
                 col_letter = get_column_letter(col_idx)

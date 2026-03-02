@@ -388,3 +388,28 @@ def test_xlsx_mrr_column_gets_currency_format(tmp_path):
     assert "%" in churn_cell.number_format, \
         f"Churn Rate column should have percent format, got: {churn_cell.number_format}"
     wb.close()
+
+
+def test_xlsx_column_width_respects_header_length(tmp_path):
+    path = tmp_path / "output.xlsx"
+    tree = _make_tree(
+        tabs=[
+            SheetTab(
+                id="t1",
+                name="Data",
+                headers=["Starting Customers", "Leads Generated", "V"],
+                rows=[[50, 1000, 1]],
+                formulas={},
+                column_widths=[40, 40, 40],  # intentionally narrow pixel values
+            )
+        ]
+    )
+    export_to_xlsx(tree, path)
+    wb = openpyxl.load_workbook(str(path))
+    ws = wb.active
+    # Column A header is 18 chars ("Starting Customers"), needs at least 20 width
+    # The narrow column_width of 40 (40/7 ≈ 5.7) must NOT win over header length
+    assert ws.column_dimensions["A"].width >= len("Starting Customers") + 2
+    # Column C header is 1 char ("V"), pixel width 40/7 ≈ 5.7 is fine but floor is 10
+    assert ws.column_dimensions["C"].width >= 5
+    wb.close()
