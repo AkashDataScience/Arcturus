@@ -26,6 +26,8 @@ from core.loop import AgentLoop4
 from core.graph_adapter import nx_to_reactflow
 from remme.utils import get_embedding
 from config.settings_loader import settings
+from core.skills.manager import skill_manager
+
 
 router = APIRouter(tags=["Runs"])
 
@@ -145,7 +147,7 @@ def _extract_voice_output(context) -> str:
     return "I've completed your request."
 
 
-async def process_run(run_id: str, query: str, source: str = "web", stream: bool = False):
+async def process_run(run_id: str, query: str, source: str = "web", stream: bool = False, skill_id: str = None):
     """
     Background task: retrieve Remme memories, run agent loop, extract new memories.
     WATCHTOWER: Root span for the entire agent run.
@@ -155,6 +157,23 @@ async def process_run(run_id: str, query: str, source: str = "web", stream: bool
     """
     with run_span(run_id, query or "") as span:
         try:
+            # 0. SKILL MATCHING & START HOOK
+            skill = None
+            if not skill_id:
+                skill_id = skill_manager.match_intent(query)
+            
+            if skill_id:
+                skill = skill_manager.get_skill(skill_id)
+                if skill:
+                    print(f"[{run_id}] 🧠 Skill Detected: {skill_id}")
+                    skill.context.run_id = run_id
+                    skill.context.agent_id = source
+                    skill.context.config = {"source": source}
+                    
+                    # Call On Start Hook (allows prompt modification)
+                    query = await skill.on_run_start(query)
+                    print(f"[{run_id}] 🧠 Skill '{skill_id}' modified prompt.")
+
             # 1. RETRIEVE MEMORIES (Remme)
             # Search for past relevant facts to inject into this run
             memory_context = ""
@@ -199,6 +218,11 @@ async def process_run(run_id: str, query: str, source: str = "web", stream: bool
             span.set_status(Status(StatusCode.ERROR, str(e)))
             span.record_exception(e)
             print(f"Run {run_id} failed: {e}")
+            if skill:
+                 try:
+                     await skill.on_run_failure(str(e))
+                 except Exception as fe:
+                     print(f"⚠️ [Skill] Failure hook failed: {fe}")
         finally:
             # Clean up
             if run_id in active_loops:
@@ -431,6 +455,28 @@ async def process_run(run_id: str, query: str, source: str = "web", stream: bool
             #   1. Close the stream queue with finish_stream (TTS consumer: no more chunks)
             #   2. Signal the completion Event (for the Event-based / non-streamed path)
             voice_output = final_result.get("output", "I've completed your request.")
+            
+            # --- PREVENT SPEAKING ERRORS ---
+            if final_result.get("status") == "failed":
+                # Use a polite generic message instead of technical error strings
+                # (Technical errors are still visible in the UI 'error' field)
+                voice_output = "I'm sorry, I encountered an error while processing your request."
+            
+            # If skill provided a summary, use it for voice
+            if skill and final_result.get("status") == "completed":
+                try:
+                    print(f"[{run_id}] 🧠 Executing Success Hook for skill: {skill_id}")
+                    skill_result = await skill.on_run_success(final_result)
+                    if skill_result and isinstance(skill_result, dict):
+                        if "summary" in skill_result:
+                            final_result["skill_summary"] = skill_result["summary"]
+                            if source == "voice":
+                                voice_output = skill_result["summary"]
+                        if "file_path" in skill_result:
+                            final_result["skill_file_path"] = skill_result["file_path"]
+                except Exception as se:
+                    print(f"⚠️ [Skill] Success hook failed for {skill_id}: {se}")
+                    
             output_len = len(voice_output) if voice_output else 0
             try:
                 if has_stream_queue(run_id):

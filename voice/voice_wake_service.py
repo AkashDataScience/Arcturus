@@ -3,13 +3,14 @@
 import threading
 import time
 import numpy as np
+from collections import deque
 from datetime import datetime
 
 from voice.audio_input import AudioInput
 from voice.wake_engine import create_wake_engine
 from voice.config import VOICE_CONFIG
 from voice.barge_in import BargeInDetector, BargeInConfig
-from shared.state import tts_is_speaking
+from shared.state import tts_is_speaking, tts_in_barge_in_grace_window
 
 
 class VoiceWakeService:
@@ -25,6 +26,12 @@ class VoiceWakeService:
         self.orchestrator = None  # Will be set after initialization
         self._running = False
         self._thread = None
+
+        # Pre-barge-in audio buffer: keeps the last ~500ms of audio frames
+        # captured during SPEAKING state (post-grace). When barge-in fires,
+        # these frames are pushed to STT so the user's speech isn't lost.
+        # At 16kHz / 512 samples per frame = 32ms/frame → 16 frames ≈ 512ms
+        self._barge_in_buffer: deque = deque(maxlen=16)
 
         # Robust barge-in detector (separate from wake/VAD/STT path).
         bi = VOICE_CONFIG.get("barge_in", {}) or {}
@@ -125,21 +132,50 @@ class VoiceWakeService:
                     self._barge.reset_speech_streak()
 
                 elif state == "SPEAKING":
-                    # During TTS: no STT, no wake engine, no VAD barge-in. Echo from
-                    # speakers would otherwise false-trigger wake or barge-in. User
-                    # can interrupt only after TTS ends (e.g. say wake word in LISTENING).
+                    # --- PRODUCTION BARGE-IN (Interruption) ---
+                    # While speaking, we check for continuous user speech.
+                    # 1. Skip if still in grace window (prevents start-of-speech echo false-triggers).
+                    if not tts_in_barge_in_grace_window():
+                        # Buffer this frame for potential STT pre-fill on barge-in.
+                        self._barge_in_buffer.append(pcm)
+
+                        # 2. Check if user is speaking over us
+                        interrupted, rms, ratio = self._barge.should_interrupt(pcm)
+                        if interrupted:
+                            print(f"⚡ [Voice] VAD Barge-in detected! (RMS: {rms:.1f}, Ratio: {ratio:.2f}x)")
+
+                            # Pre-fill STT with buffered speech BEFORE calling on_wake()
+                            # so the frames are already queued when state → LISTENING.
+                            # on_wake(BARGE_IN) deliberately skips stt.cancel() to keep them.
+                            if self.orchestrator and self.orchestrator.stt:
+                                n_frames = len(self._barge_in_buffer)
+                                for buffered_pcm in self._barge_in_buffer:
+                                    self.orchestrator.stt.push_audio(buffered_pcm)
+                                print(f"🔊 [Voice] Pre-filled STT with {n_frames} buffered frames (~{n_frames * 32}ms)")
+                            self._barge_in_buffer.clear()
+
+                            # NOW trigger wake flow — state → LISTENING, TTS cancel, nexus abort
+                            self.on_wake({"type": "BARGE_IN"})
+
+                            self._barge.reset_speech_streak()
+                            continue
+                    
+                    # 3. If TTS finished but orchestrator state is lagging
                     if not tts_is_speaking():
+                        self._barge_in_buffer.clear()
                         self._barge.observe_ambient(pcm)
                         self._barge.reset_speech_streak()
-                        continue
-                    self._barge.reset_speech_streak()
                 else:
+                    self._barge_in_buffer.clear()
                     self._barge.reset_speech_streak()
 
             except KeyboardInterrupt:
-                # Ctrl+C pressed while inside the audio loop — stop cleanly
-                print("\n🛑 [Voice] KeyboardInterrupt received. Stopping wake service.")
+                # Ctrl+C pressed while inside the audio loop — stop EVERYTHING cleanly
+                print("\n🛑 [Voice] KeyboardInterrupt received. Stopping pipeline.")
                 self._running = False
+                if self.orchestrator:
+                    # Request immediate TTS cancellation before process exits
+                    self.orchestrator.tts.cancel()
                 break
             except Exception as e:
                 if self._running:

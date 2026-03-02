@@ -68,6 +68,10 @@ class Orchestrator:
         self._silence_timer: threading.Timer | None = None
         self._active_run_id: str | None = None
 
+        # Instant barge-in signal: set by on_wake() so the nexus polling loop
+        # unblocks immediately instead of waiting up to 500ms on evt.wait().
+        self._barge_in_event = threading.Event()
+
         # ── Session logger (conversation context + JSON persistence) ──
         from voice.session_logger import VoiceSessionLogger
         self.session_logger = VoiceSessionLogger()
@@ -107,10 +111,11 @@ class Orchestrator:
 
     # ─────────────── Wake ───────────────
     def on_wake(self, event):
+        is_barge_in = event.get("type") == "BARGE_IN"
+
         with self._lock:
             prev_state = self.state
 
-            # Barge-in: if we were speaking or processing, cancel immediately
             if prev_state in ("SPEAKING", "THINKING"):
                 print(f"⚡ [Orchestrator] Wake during {prev_state} → LISTENING")
             else:
@@ -121,10 +126,22 @@ class Orchestrator:
             self._utterance_buffer.clear()
             self._set_state("LISTENING")
 
-        # Cancel TTS outside the lock (stop_speaking_async may block briefly)
+        # Signal nexus polling loop to unblock instantly (no 500ms wait)
+        self._barge_in_event.set()
+
+        # Cancel TTS immediately
         self.tts.cancel()
-        self.stt.cancel()        # drop any stale STT buffer
-        # If a run was in-flight, stop it so we don't complete silently.
+
+        # ── STT handling ──────────────────────────────────────────────────
+        # For a normal wake-word: clear STT buffer (drop stale audio).
+        # For a BARGE_IN: do NOT cancel STT — voice_wake_service already
+        # pre-filled buffered speech frames and we must not wipe them.
+        if not is_barge_in:
+            self.stt.cancel()   # fresh wake — drop any stale buffer
+        else:
+            print("🎙️ [Orchestrator] Barge-in STT: keeping pre-filled frames alive")
+
+        # Stop the in-flight Nexus run so it doesn't complete silently
         self._stop_active_run_async()
 
         # Start a new voice session (if coming from IDLE, i.e. fresh wake)
@@ -264,6 +281,8 @@ class Orchestrator:
             self._enter_follow_up()
             return
         self._set_active_run(run_id)
+        # Clear any stale barge-in signal from a previous turn
+        self._barge_in_event.clear()
 
         # Register the Event for this run_id ASAP
         evt = register_run_waiter(run_id)
@@ -325,7 +344,19 @@ class Orchestrator:
                 if evt.is_set():
                     break
 
-            evt.wait(timeout=0.5)
+            # Wake every 50ms to check _barge_in_event for instant abort.
+            # Also check every 0.5s for state (catches edge cases).
+            self._barge_in_event.wait(timeout=0.05)
+            if self._barge_in_event.is_set():
+                with self._lock:
+                    if self.state != "THINKING":
+                        pop_run_result(run_id)
+                        print("⚡ [Orchestrator] Barge-in (instant) during processing — skipping TTS.")
+                        self._stop_active_run_async()
+                        self._set_active_run(None)
+                        return
+                # state is still THINKING (false alarm) — clear and keep going
+                self._barge_in_event.clear()
 
         if not evt.is_set():
             pop_run_result(run_id)
@@ -490,56 +521,81 @@ class Orchestrator:
         """
         text = md_text
 
-        # Remove code blocks
+        # ── Guard: never speak raw Python exception strings ─────────────────
+        # If the entire text looks like an exception (NameError, TypeError, etc.)
+        # replace it with a graceful spoken fallback.
+        _EXCEPTION_PATTERN = re.compile(
+            r'^(NameError|TypeError|ValueError|AttributeError|KeyError|'
+            r'IndexError|RuntimeError|ImportError|ModuleNotFoundError|'
+            r'ZeroDivisionError|AssertionError|OSError|FileNotFoundError|'
+            r'StopIteration|GeneratorExit|SystemExit|Exception|BaseException|'
+            r'Traceback \(most recent call last\))',
+            re.MULTILINE
+        )
+        if _EXCEPTION_PATTERN.search(text.strip()):
+            print(f"⚠️ [Orchestrator] Suppressing error string from TTS: {text[:120]!r}")
+            return "I ran into a small issue while processing that. Please try again."
+
+        # ── Step 1: Remove code blocks (before anything else) ────────────────
         text = re.sub(r'```[\s\S]*?```', '', text)
         text = re.sub(r'`[^`]+`', '', text)
 
-        # Remove markdown images
+        # ── Step 2: Remove markdown images ────────────────────────────────────
         text = re.sub(r'!\[[^\]]*\]\([^\)]+\)', '', text)
 
-        # Convert links to just the label
+        # ── Step 3: Convert links → label only ───────────────────────────────
         text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
 
-        # Remove headers markers
+        # ── Step 4: Strip header markers (# ## ### at line start) ────────────
         text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
 
-        # Remove bold/italic markers
-        text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
-        text = re.sub(r'_{1,3}([^_]+)_{1,3}', r'\1', text)
+        # ── Step 5: Strip bold/italic wrappers (*** ** * _ __ ___) ──────────
+        # Must do longest match first (*** before ** before *)
+        text = re.sub(r'\*{3}([^*]+)\*{3}', r'\1', text)
+        text = re.sub(r'\*{2}([^*]+)\*{2}', r'\1', text)
+        text = re.sub(r'\*([^*\n]+)\*',     r'\1', text)
+        text = re.sub(r'_{3}([^_]+)_{3}',   r'\1', text)
+        text = re.sub(r'_{2}([^_]+)_{2}',   r'\1', text)
+        text = re.sub(r'_([^_\n]+)_',       r'\1', text)
 
-        # Remove horizontal rules
+        # ── Step 6: Remove horizontal rules ──────────────────────────────────
         text = re.sub(r'^[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)
 
-        # Remove bullet/list markers
+        # ── Step 7: Remove bullet/list markers ───────────────────────────────
         text = re.sub(r'^[\s]*[-*+]\s+', '', text, flags=re.MULTILINE)
         text = re.sub(r'^[\s]*\d+\.\s+', '', text, flags=re.MULTILINE)
 
-        # Remove table formatting
+        # ── Step 8: Remove table formatting ──────────────────────────────────
         text = re.sub(r'\|', ' ', text)
         text = re.sub(r'^[-:]+\s*$', '', text, flags=re.MULTILINE)
 
-        # Remove LLM-generated placeholder phrases (bracket and bare-prose variants)
-        # e.g. "[Placeholder for second point]", "Placeholder for X.", "[Add content here]"
-        text = re.sub(
-            r'\[?[Pp]laceholder\b[^\]\n]*\]?\.?', '', text
-        )
+        # ── Step 9: Remove LLM placeholder boilerplate ───────────────────────
+        text = re.sub(r'\[?[Pp]laceholder\b[^\]\n]*\]?\.?', '', text)
         text = re.sub(
             r'\[(?:Add|Insert|Include|Enter|TODO|TBD|Content goes here)[^\]]*\]',
             '', text, flags=re.IGNORECASE
         )
-        # Remove role-style prefixes like "Captain:" at the very start,
-        # which were useful in text but sound awkward when spoken.
-        text = re.sub(r'^\s*Captain:\s*', '', text, flags=re.IGNORECASE)
-        # Remove lines that became empty after stripping
-        text = re.sub(r'^\s*$', '', text, flags=re.MULTILINE)
 
-        # Collapse whitespace
+        # ── Step 10: Remove "Captain" in all spoken forms ────────────────────
+        # "Captain: ...", "Captain," "Captain." "Captain!" and bare "Captain"
+        # anywhere in the text (it's an internal agent persona label, not speech).
+        text = re.sub(r'\bCaptain\b[\s:,.\!]*', '', text, flags=re.IGNORECASE)
+
+        # ── Step 11: Scrub any surviving bare symbol characters ───────────────
+        # After all the paired-syntax removals above, orphaned # and * chars
+        # (e.g. a lone asterisk used as emphasis without a closing pair) must go.
+        text = re.sub(r'#+', '', text)   # bare hash(es) anywhere
+        text = re.sub(r'\*+', '', text)  # bare asterisk(s) anywhere
+
+        # ── Step 12: Whitespace cleanup ───────────────────────────────────────
+        text = re.sub(r'^[ \t]+', '', text, flags=re.MULTILINE)  # leading spaces on lines
+        text = re.sub(r'[ \t]{2,}', ' ', text)                   # multiple spaces → one
+        text = re.sub(r'^\s*$', '', text, flags=re.MULTILINE)    # blank lines
         text = re.sub(r'\n{3,}', '\n\n', text)
         text = text.strip()
 
-        # Truncate for voice (keep it conversational)
+        # ── Step 13: Truncate for voice (keep it conversational) ─────────────
         if len(text) > 800:
-            # Try to cut at a sentence boundary
             cut = text[:800].rfind('.')
             if cut > 400:
                 text = text[:cut + 1]
@@ -593,6 +649,8 @@ class Orchestrator:
             self._enter_follow_up()
             return
         self._set_active_run(run_id)
+        # Clear any stale barge-in signal from a previous turn
+        self._barge_in_event.clear()
 
         # Register both: Event for completion + Queue for streaming chunks
         evt = register_run_waiter(run_id)
@@ -662,7 +720,21 @@ class Orchestrator:
                     self._stop_active_run_async()
                     self._set_active_run(None)
                     return
-            evt.wait(timeout=0.5)
+            # Wake every 50ms on _barge_in_event for instant abort on barge-in.
+            self._barge_in_event.wait(timeout=0.05)
+            if self._barge_in_event.is_set():
+                with self._lock:
+                    cur_state = self.state
+                if cur_state not in ("THINKING", "SPEAKING"):
+                    pop_run_result(run_id)
+                    finish_stream(run_id)
+                    pop_stream_queue(run_id)
+                    print(f"⚡ [Orchestrator] Barge-in (instant) during streamed processing — aborting.")
+                    self._stop_active_run_async()
+                    self._set_active_run(None)
+                    return
+                # state is still valid (spurious) — clear and keep going
+                self._barge_in_event.clear()
 
         if not evt.is_set():
             # Timed out

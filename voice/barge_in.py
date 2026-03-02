@@ -18,6 +18,8 @@ from dataclasses import dataclass
 import math
 from typing import Iterable
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class BargeInConfig:
@@ -26,13 +28,13 @@ class BargeInConfig:
 
     # Energy requirement relative to ambient noise floor.
     # 2.3x is a good default between 2.0–2.5x.
-    energy_ratio_threshold: float = 2.3
+    energy_ratio_threshold: float = 2.0
 
     # Near-field gating to prevent distant talkers from barging-in:
     # Require a minimum absolute RMS AND a minimum margin above noise floor.
     # (Both are in int16 RMS units, 0–32768.)
-    min_absolute_rms: float = 1000.0
-    min_rms_above_noise: float = 250.0
+    min_absolute_rms: float = 700.0
+    min_rms_above_noise: float = 200.0
 
     # Absolute RMS floor to avoid division-by-near-zero or hypersensitivity
     # when noise floor hasn't been established yet.
@@ -121,20 +123,17 @@ class BargeInDetector:
         return (self._speech_ms >= self.cfg.min_continuous_speech_ms), rms, ratio
 
 
-def _rms_int16(pcm_frame: Iterable[int]) -> float:
+def _rms_int16(pcm_frame) -> float:
     """
     Compute RMS on an int16 PCM frame. Returns RMS in int16 units (0–32768).
-    Works with tuples/lists/numpy arrays (as long as it yields ints).
+    Accepts numpy arrays (fast path) or any iterable of ints (fallback).
     """
-    # Manual loop avoids importing numpy in the hot path.
-    s2 = 0.0
-    n = 0
-    for x in pcm_frame:
-        # Cast to float for safety; x is already int16-ish.
-        xf = float(x)
-        s2 += xf * xf
-        n += 1
-    if n == 0:
+    if isinstance(pcm_frame, np.ndarray):
+        arr = pcm_frame.astype(np.float64)
+    else:
+        arr = np.array(pcm_frame, dtype=np.float64)
+    if arr.size == 0:
         return 0.0
-    return math.sqrt(s2 / n)
+    return float(np.sqrt(np.mean(arr * arr)))
+
 

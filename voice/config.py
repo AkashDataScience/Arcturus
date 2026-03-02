@@ -84,18 +84,19 @@ VOICE_CONFIG = {
     # Stricter values reduce self-interrupt when TTS is picked up by the mic.
     "barge_in": {
         # Suppress barge-in detection for this long after TTS starts
-        # (attack phase / echo leakage). Increased from 300 to reduce echo false triggers.
-        "grace_ms": 700,
+        # (attack phase / echo leakage). 400ms is enough to avoid initial echo burst.
+        "grace_ms": 400,
 
-        # Continuous speech required before interrupt (longer = less echo-triggered barge-in).
-        "min_speech_ms": 350,
+        # Continuous speech required before interrupt.
+        # 120ms = lower bound of the 120-200ms design band → fastest reliable detection.
+        "min_speech_ms": 120,
 
         # Energy must be at least this multiple of ambient noise floor.
-        "energy_ratio": 3.0,
+        "energy_ratio": 2.5,
 
-        # Near-field gates (int16 RMS units). Higher = only loud, close speech triggers.
-        "min_absolute_rms": 1600,
-        "min_rms_above_noise": 300,
+        # Near-field gates (int16 RMS units). Balanced for responsive near-field detection.
+        "min_absolute_rms": 900,
+        "min_rms_above_noise": 250,
     },
 
     # -----------------------------
@@ -127,7 +128,7 @@ VOICE_CONFIG = {
     # TTS configuration
     # -----------------------------
     # Provider selection: "azure" (cloud, premium) or "piper" (local, offline, streaming)
-    "tts_provider": "piper",
+    "tts_provider": "azure",
 
     # Azure Speech credentials loaded from env: AZURE_SPEECH_KEY, AZURE_SPEECH_REGION
     "tts": {

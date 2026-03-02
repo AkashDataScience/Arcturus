@@ -102,6 +102,10 @@ def _extract_node_chunk(step_id: str, agent_type: str, output) -> str | None:
 
     # FormatterAgent: prefer the markdown report
     if isinstance(output, dict):
+        # SKIP IF ERROR PRESENT
+        if output.get("error") or output.get("status") == "failed":
+             return None
+
         if "Format" in agent_type or agent_type == "FormatterAgent":
             text = output.get("markdown_report") or output.get("formatted_report")
             if not text:
@@ -113,12 +117,17 @@ def _extract_node_chunk(step_id: str, agent_type: str, output) -> str | None:
         # Generic fallback: find the largest string value
         if not text:
             best = ""
-            for v in output.values():
+            for k, v in output.items():
+                if k == "error" or k == "traceback":
+                    continue
                 if isinstance(v, str) and len(v) > len(best):
                     best = v
             text = best or None
 
     elif isinstance(output, str):
+        # Basic heuristic for avoiding speaking technical errors directly
+        if output.lower().startswith("error:") or "traceback (most recent call last):" in output.lower():
+            return None
         text = output
 
     if not text or len(text.strip()) < _VOICE_MIN_CHARS:

@@ -436,39 +436,84 @@ class PiperTTSService:
             print(f"⚠️ [PiperTTS] Synthesis error: {e}")
 
     def _clean_for_speech(self, text: str) -> str:
-        """Strip markdown / code artifacts for cleaner speech."""
-        # Remove code blocks
+        """
+        Strip markdown / code artifacts and symbols for clean speech output.
+        Kept in sync with Orchestrator._markdown_to_speech().
+        """
+        # ── Guard: never speak raw Python exception strings ─────────────────
+        _EXCEPTION_PATTERN = re.compile(
+            r'^(NameError|TypeError|ValueError|AttributeError|KeyError|'
+            r'IndexError|RuntimeError|ImportError|ModuleNotFoundError|'
+            r'ZeroDivisionError|AssertionError|OSError|FileNotFoundError|'
+            r'StopIteration|GeneratorExit|SystemExit|Exception|BaseException|'
+            r'Traceback \(most recent call last\))',
+            re.MULTILINE
+        )
+        if _EXCEPTION_PATTERN.search(text.strip()):
+            print(f"⚠️ [PiperTTS] Suppressing error string: {text[:120]!r}")
+            return "I ran into a small issue. Please try again."
+
+        # Step 1: Remove code blocks
         text = re.sub(r'```[\s\S]*?```', '', text)
         text = re.sub(r'`[^`]+`', '', text)
-        # Remove markdown images
+
+        # Step 2: Remove markdown images
         text = re.sub(r'!\[[^\]]*\]\([^\)]+\)', '', text)
-        # Convert links to just the label
+
+        # Step 3: Convert links → label only
         text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
-        # Remove header markers
+
+        # Step 4: Strip header markers (# ## ### at line start)
         text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-        # Remove bold/italic
-        text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
-        text = re.sub(r'_{1,3}([^_]+)_{1,3}', r'\1', text)
-        # Remove horizontal rules
+
+        # Step 5: Strip bold/italic — longest-match first (*** → ** → *)
+        text = re.sub(r'\*{3}([^*]+)\*{3}', r'\1', text)
+        text = re.sub(r'\*{2}([^*]+)\*{2}', r'\1', text)
+        text = re.sub(r'\*([^*\n]+)\*',     r'\1', text)
+        text = re.sub(r'_{3}([^_]+)_{3}',   r'\1', text)
+        text = re.sub(r'_{2}([^_]+)_{2}',   r'\1', text)
+        text = re.sub(r'_([^_\n]+)_',       r'\1', text)
+
+        # Step 6: Remove horizontal rules
         text = re.sub(r'^[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)
-        # Remove bullet markers
+
+        # Step 7: Remove bullet/list markers
         text = re.sub(r'^[\s]*[-*+]\s+', '', text, flags=re.MULTILINE)
         text = re.sub(r'^[\s]*\d+\.\s+', '', text, flags=re.MULTILINE)
-        # Remove table formatting
+
+        # Step 8: Remove table formatting
         text = re.sub(r'\|', ' ', text)
         text = re.sub(r'^[-:]+\s*$', '', text, flags=re.MULTILINE)
-        # Collapse whitespace
+
+        # Step 9: Remove LLM placeholder boilerplate
+        text = re.sub(r'\[?[Pp]laceholder\b[^\]\n]*\]?\.?', '', text)
+        text = re.sub(
+            r'\[(?:Add|Insert|Include|Enter|TODO|TBD|Content goes here)[^\]]*\]',
+            '', text, flags=re.IGNORECASE
+        )
+
+        # Step 10: Remove "Captain" in all forms
+        text = re.sub(r'\bCaptain\b[\s:,.\!]*', '', text, flags=re.IGNORECASE)
+
+        # Step 11: Scrub surviving bare # and * characters
+        text = re.sub(r'#+',  '', text)
+        text = re.sub(r'\*+', '', text)
+
+        # Step 12: Whitespace cleanup
+        text = re.sub(r'^[ \t]+', '', text, flags=re.MULTILINE)
+        text = re.sub(r'[ \t]{2,}', ' ', text)
+        text = re.sub(r'^\s*$', '', text, flags=re.MULTILINE)
         text = re.sub(r'\n{3,}', '\n\n', text)
-        text = re.sub(r'  +', ' ', text)
         text = text.strip()
 
-        # Truncate for voice (keep conversational)
+        # Step 13: Truncate for voice (Piper limit is higher for streaming)
         if len(text) > 2000:
             cut = text[:2000].rfind('.')
             if cut > 400:
                 text = text[:cut + 1]
             else:
                 text = text[:2000] + "... I've summarized the rest for brevity."
+
         return text
 
     def _build_voice(self):
