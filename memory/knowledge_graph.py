@@ -5,6 +5,10 @@ Ties to Qdrant via memory_id (Qdrant point id) and entity_ids (Neo4j entity ids 
 Schema: User, Memory, Session, Entity nodes; HAS_MEMORY, FROM_SESSION, CONTAINS_ENTITY,
 RELATED_TO, LIVES_IN, WORKS_AT, KNOWS, PREFERS relationships.
 
+Future: space_id / Space dimension (Mnemo Spaces/Collections). When added, constrain
+retrieval (get_entities_for_user, expand_from_entities, get_memory_ids_for_entity_names)
+and ingestion (create_memory, ingest_memory) by space_id. See P11 design §9.4.
+
 Enable via NEO4J_ENABLED=true and NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD env vars.
 """
 

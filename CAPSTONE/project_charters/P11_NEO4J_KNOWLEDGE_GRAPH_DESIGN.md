@@ -18,7 +18,7 @@ Neo4j stores extracted entities and relationships from Remme memories. It ties t
 | Node Label | Properties | Purpose |
 |------------|------------|---------|
 | **User** | `id`, `user_id` | Central node; multi-tenant; anchor for derived facts |
-| **Memory** | `id` (Qdrant point id), `category`, `source`, `created_at` | Bridge to Qdrant |
+| **Memory** | `id` (Qdrant point id), `category`, `source`, `created_at` | Bridge to Qdrant. *Future:* `space_id` or `(:Memory)-[:IN_SPACE]->(:Space)` to scope retrieval by Space/Collection (Mnemo spec). |
 | **Session** | `id`, `session_id`, `original_query`, `created_at` | Provenance; temporal grouping |
 | **Entity** | `id`, `type`, `name`, `canonical_name`, `composite_key`, `created_at` | Person, Company, Concept, etc. `name` = display; `canonical_name` = normalized (lowercase, stripped); `composite_key` = `type::canonical_name` for dedupe so "Google" and "google" merge. |
 
@@ -197,3 +197,13 @@ Or attach the file and ask to implement the design.
 - **Extraction pipeline:** As in 9.2, the session-level extractor would output memories, preferences, and entities; the ingestion path would write preferences into the new store (and optionally still to JSON for a transition period). This may require mapping current hub schema (e.g. dietary_style, verbosity) to entities/concepts and user_facts (e.g. PREFERS → Concept "vegetarian") so that both the graph and the UI stay consistent.
 
 Use this section (9) as the reference when starting a new context to implement retrieval improvements, session-level extraction, and/or preferences unification.
+
+### 9.4 Space / space_id — Reserved Hook (Do Not Implement Yet)
+
+**Context:** Mnemo spec includes Spaces/Collections. The graph is currently scoped by `user_id` and `session_id` only; there is no space dimension. When Spaces are introduced, cross-project retrieval could become noisy without scoping.
+
+**Reserved design (no code yet):**
+- **Option A:** Add `(:Memory)-[:IN_SPACE]->(:Space)` and a `Space` node; constrain all retrieval paths (entities for user, expand, resolve) to memories in the requested space(s).
+- **Option B:** Add `space_id` as a property on `Memory` and filter queries with `WHERE m.space_id = $space_id` (or `IN $space_ids`).
+
+**Where to add the hook when implementing:** In `memory/knowledge_graph.py`, all user-scoped reads that traverse memories (e.g. `get_entities_for_user`, `expand_from_entities`, `get_memory_ids_for_entity_names`, and any Qdrant call that uses `entity_ids` from the graph) should accept an optional `space_id` (or `space_ids`) and constrain to memories in that space. Ingestion (`create_memory`, `ingest_memory`) would accept optional `space_id` and set the relationship or property. Qdrant payload would include `space_id` for filtered search.
