@@ -1,8 +1,9 @@
-"""Document export validators — DOCX and PDF post-export checks."""
+"""Document export validators — DOCX, PDF, and HTML post-export checks."""
 
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -138,6 +139,79 @@ def validate_pdf(
         "page_count": page_count,
         "text_present": text_present,
         "bibliography_present": bibliography_present,
+    }
+
+
+def validate_html(
+    output_path: Path,
+    content_tree: Optional[DocumentContentTree] = None,
+) -> Dict[str, Any]:
+    """Validate an exported HTML document.
+
+    Returns dict with: valid, format, errors, warnings.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not output_path.exists():
+        return {
+            "valid": False,
+            "format": "html",
+            "errors": ["Output file does not exist"],
+            "warnings": [],
+        }
+
+    content = output_path.read_text(encoding="utf-8")
+
+    if len(content) < 100:
+        errors.append("HTML file appears empty or too small")
+
+    if "<!DOCTYPE html>" not in content:
+        errors.append("Missing DOCTYPE declaration")
+
+    # Security check: template scripts are theme-detect + toggle (2 baseline),
+    # plus optionally 1 Mermaid init → max 3.  More suggests injection.
+    script_count = len(re.findall(r"<script[\s>]", content, re.IGNORECASE))
+    if script_count > 3:
+        errors.append(f"Unexpected script tag count: {script_count} (expected 2-3)")
+
+    # Cross-check with content tree if provided
+    if content_tree:
+        if content_tree.doc_title and content_tree.doc_title not in content:
+            warnings.append("Document title not found in HTML output")
+
+        # Check section headings are present
+        missing_sections = [
+            s.heading for s in content_tree.sections
+            if s.heading not in content
+        ]
+        if missing_sections:
+            warnings.append(
+                f"Missing section headings: {', '.join(missing_sections[:5])}"
+            )
+
+        # Verify section anchor IDs exist for TOC navigation
+        missing_anchors: list[str] = []
+
+        def _check_anchors(sections):
+            for s in sections:
+                anchor = f'id="section-{s.id}"'
+                if anchor not in content:
+                    missing_anchors.append(s.id)
+                if s.subsections:
+                    _check_anchors(s.subsections)
+
+        _check_anchors(content_tree.sections)
+        if missing_anchors:
+            warnings.append(
+                f"Missing section anchors: {', '.join(missing_anchors[:5])}"
+            )
+
+    return {
+        "valid": len(errors) == 0,
+        "format": "html",
+        "errors": errors,
+        "warnings": warnings,
     }
 
 

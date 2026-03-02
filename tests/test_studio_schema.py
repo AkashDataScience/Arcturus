@@ -389,7 +389,7 @@ class TestExportFormatEnum:
 
     def test_all_formats(self):
         values = {f.value for f in ExportFormat}
-        assert values == {"pptx", "docx", "pdf"}
+        assert values == {"pptx", "docx", "pdf", "html"}
 
     def test_export_job_with_docx_format(self):
         job = ExportJob(
@@ -410,6 +410,99 @@ class TestExportFormatEnum:
             created_at=datetime.now(timezone.utc),
         )
         assert job.format == ExportFormat.pdf
+
+
+# === HTML Export Sanitization Tests ===
+
+class TestHtmlSanitization:
+    """Tests for defense-in-depth sanitization in the HTML export path."""
+
+    def test_unquoted_javascript_url_stripped(self):
+        """Unquoted javascript: URLs in HTML attributes should be neutralized."""
+        from core.studio.documents.markdown_render import _strip_dangerous_html
+
+        # Unquoted attribute — the original regex missed this
+        html = '<a href=javascript:alert(1)>click</a>'
+        result = _strip_dangerous_html(html)
+        assert "javascript:" not in result
+
+    def test_quoted_javascript_url_still_stripped(self):
+        """Quoted javascript: URLs should continue to be stripped."""
+        from core.studio.documents.markdown_render import _strip_dangerous_html
+
+        html = '<a href="javascript:alert(1)">click</a>'
+        result = _strip_dangerous_html(html)
+        assert "javascript:" not in result
+
+    def test_bibliography_javascript_url_removed(self):
+        """Bibliography entries with javascript: URLs must not produce <a> tags."""
+        from core.studio.documents.exporter_html import _sanitize_bibliography
+
+        entries = [
+            {"key": "ref1", "title": "Safe", "url": "https://example.com"},
+            {"key": "ref2", "title": "Malicious", "url": "javascript:alert(1)"},
+            {"key": "ref3", "title": "No URL"},
+        ]
+        result = _sanitize_bibliography(entries)
+        assert result[0]["url"] == "https://example.com"
+        assert "url" not in result[1]
+        assert "url" not in result[2]
+
+    def test_bibliography_safe_schemes_allowed(self):
+        """http, https, mailto, ftp should pass through."""
+        from core.studio.documents.exporter_html import _sanitize_bibliography
+
+        entries = [
+            {"key": "a", "url": "http://example.com"},
+            {"key": "b", "url": "https://example.com"},
+            {"key": "c", "url": "mailto:user@example.com"},
+            {"key": "d", "url": "ftp://files.example.com/doc.pdf"},
+        ]
+        result = _sanitize_bibliography(entries)
+        for i, entry in enumerate(result):
+            assert "url" in entry, f"Entry {i} url should be preserved"
+
+    def test_bibliography_empty_and_none(self):
+        """Sanitizer handles None and empty lists gracefully."""
+        from core.studio.documents.exporter_html import _sanitize_bibliography
+
+        assert _sanitize_bibliography(None) == []
+        assert _sanitize_bibliography([]) == []
+
+    def test_abstract_mermaid_triggers_has_mermaid(self):
+        """Mermaid code fence in abstract should set has_mermaid=True."""
+        from core.studio.documents.exporter_html import (
+            _collect_all_content,
+            _MERMAID_MARKER,
+        )
+        from core.studio.documents.markdown_render import markdown_to_html_web
+
+        abstract_md = "Overview:\n\n```mermaid\ngraph TD\n  A-->B\n```"
+        abstract_html = markdown_to_html_web(abstract_md)
+        sections_data: list[dict] = []  # no sections with mermaid
+
+        has_mermaid = (
+            _MERMAID_MARKER in _collect_all_content(sections_data)
+            or _MERMAID_MARKER in abstract_html
+        )
+        assert has_mermaid is True
+
+    def test_section_only_mermaid_still_detected(self):
+        """Mermaid in sections (but not abstract) should still be detected."""
+        from core.studio.documents.exporter_html import (
+            _collect_all_content,
+            _MERMAID_MARKER,
+        )
+        from core.studio.documents.markdown_render import markdown_to_html_web
+
+        abstract_html = markdown_to_html_web("Plain abstract, no diagrams.")
+        sections_data = [{"content": '<div class="mermaid">\ngraph LR\n  X-->Y\n</div>'}]
+
+        has_mermaid = (
+            _MERMAID_MARKER in _collect_all_content(sections_data)
+            or _MERMAID_MARKER in abstract_html
+        )
+        assert has_mermaid is True
 
 
 class TestDocumentProvenanceMetadata:

@@ -72,3 +72,58 @@ def markdown_to_html(text: str | None) -> str:
     result = markdown.markdown(text, extensions=_EXTENSIONS)
     result = _MERMAID_BLOCK_RE.sub(_mermaid_to_diagram_box, result)
     return result
+
+
+# ── HTML sanitization (defense-in-depth for LLM output) ──────────
+# Python-Markdown passes raw HTML through by default, and the template
+# uses {{ section.content | safe }}.  Since content originates from LLM
+# output, we strip executable constructs before rendering.
+
+_DANGEROUS_TAG_RE = re.compile(
+    r"<script[\s>].*?</script>|<script[\s>][^<]*$",
+    re.DOTALL | re.IGNORECASE | re.MULTILINE,
+)
+_EVENT_HANDLER_RE = re.compile(
+    r"""\s+on\w+\s*=\s*(?:["'][^"']*["']|[^\s>]+)""",
+    re.IGNORECASE,
+)
+_JS_URL_RE = re.compile(r"""(href|src|action)\s*=\s*["']?\s*javascript:""", re.IGNORECASE)
+
+
+def _strip_dangerous_html(html_text: str) -> str:
+    """Remove executable HTML constructs from converted markdown.
+
+    Strips: <script> tags, on*= event handlers, javascript: URLs.
+    """
+    result = _DANGEROUS_TAG_RE.sub("", html_text)
+    result = _EVENT_HANDLER_RE.sub("", result)
+    result = _JS_URL_RE.sub(r'\1="', result)
+    return result
+
+
+def _mermaid_to_live_div(match: re.Match) -> str:
+    """Replace a mermaid code block with a live-renderable <div class='mermaid'>.
+
+    Content stays HTML-entity-encoded (as emitted by markdown's fenced_code).
+    The browser decodes entities into text nodes (not elements), so Mermaid.js
+    reads correct diagram source via textContent without HTML injection risk.
+    """
+    source = match.group(1).strip()
+    return f'<div class="mermaid">\n{source}\n</div>'
+
+
+def markdown_to_html_web(text: str | None) -> str:
+    """Convert markdown to HTML with live Mermaid blocks for web viewing.
+
+    Unlike ``markdown_to_html``, this variant:
+    - Sanitizes executable HTML (scripts, event handlers, javascript: URLs)
+    - Replaces Mermaid code blocks with ``<div class="mermaid">`` for
+      client-side rendering by Mermaid.js
+    """
+    if not text or not text.strip():
+        return ""
+    text = _normalize_inline_lists(text)
+    result = markdown.markdown(text, extensions=_EXTENSIONS)
+    result = _strip_dangerous_html(result)
+    result = _MERMAID_BLOCK_RE.sub(_mermaid_to_live_div, result)
+    return result

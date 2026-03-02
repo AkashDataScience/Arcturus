@@ -245,7 +245,7 @@ class ForgeOrchestrator:
         # Validate artifact type / format combinations
         _VALID_COMBOS = {
             ArtifactType.slides: {ExportFormat.pptx},
-            ArtifactType.document: {ExportFormat.docx, ExportFormat.pdf},
+            ArtifactType.document: {ExportFormat.docx, ExportFormat.pdf, ExportFormat.html},
         }
         valid_formats = _VALID_COMBOS.get(artifact.type)
         if valid_formats is None:
@@ -262,8 +262,8 @@ class ForgeOrchestrator:
                 raise ValueError("theme_id is not supported for document exports")
             if strict_layout:
                 raise ValueError("strict_layout is not supported for document exports")
-            if generate_images:
-                raise ValueError("generate_images is not supported for document exports")
+            if generate_images and export_format != ExportFormat.html:
+                raise ValueError("generate_images is only supported for HTML document exports")
 
         # Resolve theme for slides
         theme = None
@@ -299,6 +299,14 @@ class ForgeOrchestrator:
             asyncio.create_task(self._run_export(
                 artifact_id, export_job, artifact.content_tree,
                 theme, strict_layout, generate_images,
+            ))
+            return export_job.model_dump(mode="json")
+
+        # HTML document with images — run in background (Gemini API call)
+        if artifact.type == ArtifactType.document and generate_images:
+            asyncio.create_task(self._run_document_export(
+                artifact_id, export_job, artifact.content_tree,
+                generate_images=True,
             ))
             return export_job.model_dump(mode="json")
 
@@ -399,8 +407,9 @@ class ForgeOrchestrator:
         artifact_id: str,
         export_job: Any,
         content_tree_dict: dict,
+        generate_images: bool = False,
     ) -> None:
-        """Execute document export (DOCX or PDF)."""
+        """Execute document export (DOCX, PDF, or HTML)."""
         from core.schemas.studio_schema import (
             DocumentContentTree,
             ExportFormat,
@@ -424,6 +433,26 @@ class ForgeOrchestrator:
                 from core.studio.documents.validator import validate_pdf
                 export_to_pdf(content_tree_model, output_path)
                 validation = validate_pdf(output_path, content_tree_model)
+            elif export_job.format == ExportFormat.html:
+                from core.studio.documents.exporter_html import export_to_html
+                from core.studio.documents.validator import validate_html
+
+                # Optional hero image generation
+                hero_image_bytes = None
+                if generate_images:
+                    try:
+                        from core.studio.images import generate_single_image
+                        description = f"Professional document header for: {content_tree_model.doc_title}"
+                        if content_tree_model.abstract:
+                            description += f". {content_tree_model.abstract[:200]}"
+                        buf = await generate_single_image(description)
+                        if buf:
+                            hero_image_bytes = buf.read()
+                    except Exception as img_err:
+                        logger.warning("Hero image generation failed, exporting without: %s", img_err)
+
+                export_to_html(content_tree_model, output_path, hero_image=hero_image_bytes)
+                validation = validate_html(output_path, content_tree_model)
             else:
                 raise ValueError(f"Unsupported document format: {export_job.format.value}")
 

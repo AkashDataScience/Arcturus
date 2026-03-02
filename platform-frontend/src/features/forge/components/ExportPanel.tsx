@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-    Download, Loader2, CheckCircle, AlertCircle, Palette, FileDown, ChevronDown, FileText, File
+    Download, Loader2, CheckCircle, AlertCircle, Palette, FileDown, ChevronDown, FileText, File, Globe
 } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { api } from '@/lib/api';
@@ -309,20 +309,42 @@ function DocFormatPickerDialog({
 }: {
     open: boolean;
     onOpenChange: (v: boolean) => void;
-    onSelect: (format: string) => void;
+    onSelect: (format: string, generateImages?: boolean) => void;
 }) {
+    const [selected, setSelected] = useState<string | null>(null);
+    const [generateImages, setGenerateImages] = useState(false);
+
+    const handleOpenChange = (v: boolean) => {
+        if (!v) { setSelected(null); setGenerateImages(false); }
+        onOpenChange(v);
+    };
+
+    const handleSelect = (format: string) => {
+        if (format === 'html') {
+            setSelected(format);
+        } else {
+            onSelect(format);
+            handleOpenChange(false);
+        }
+    };
+
+    const handleConfirmHtml = () => {
+        onSelect('html', generateImages || undefined);
+        handleOpenChange(false);
+    };
+
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="bg-card border-border sm:max-w-sm text-foreground">
+        <Dialog open={open} onOpenChange={handleOpenChange}>
+            <DialogContent className="bg-card border-border sm:max-w-md text-foreground">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <FileDown className="w-4 h-4 text-primary" />
                         Choose Export Format
                     </DialogTitle>
                 </DialogHeader>
-                <div className="grid grid-cols-2 gap-3 p-1">
+                <div className="grid grid-cols-3 gap-3 p-1">
                     <button
-                        onClick={() => { onSelect('docx'); onOpenChange(false); }}
+                        onClick={() => handleSelect('docx')}
                         className="flex flex-col items-center gap-2 p-4 rounded-lg border border-border/50 hover:border-primary/40 hover:bg-muted/30 transition-all"
                     >
                         <FileText className="w-8 h-8 text-blue-400" />
@@ -330,14 +352,42 @@ function DocFormatPickerDialog({
                         <span className="text-[10px] text-muted-foreground">Word Document</span>
                     </button>
                     <button
-                        onClick={() => { onSelect('pdf'); onOpenChange(false); }}
+                        onClick={() => handleSelect('pdf')}
                         className="flex flex-col items-center gap-2 p-4 rounded-lg border border-border/50 hover:border-primary/40 hover:bg-muted/30 transition-all"
                     >
                         <File className="w-8 h-8 text-red-400" />
                         <span className="text-sm font-medium">PDF</span>
                         <span className="text-[10px] text-muted-foreground">PDF Document</span>
                     </button>
+                    <button
+                        onClick={() => handleSelect('html')}
+                        className={cn(
+                            "flex flex-col items-center gap-2 p-4 rounded-lg border transition-all",
+                            selected === 'html'
+                                ? "border-primary bg-primary/10 ring-1 ring-primary/40"
+                                : "border-border/50 hover:border-primary/40 hover:bg-muted/30"
+                        )}
+                    >
+                        <Globe className="w-8 h-8 text-emerald-400" />
+                        <span className="text-sm font-medium">HTML</span>
+                        <span className="text-[10px] text-muted-foreground">Web Page</span>
+                    </button>
                 </div>
+                {selected === 'html' && (
+                    <div className="flex items-center justify-between px-1 pt-2 border-t border-border/50">
+                        <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                            <Switch
+                                checked={generateImages}
+                                onCheckedChange={setGenerateImages}
+                            />
+                            Generate hero image (AI)
+                        </label>
+                        <Button size="sm" onClick={handleConfirmHtml}>
+                            <FileDown className="w-3.5 h-3.5 mr-1.5" />
+                            Export HTML
+                        </Button>
+                    </div>
+                )}
             </DialogContent>
         </Dialog>
     );
@@ -410,8 +460,8 @@ export function ExportPanel({ artifact }: { artifact: any }) {
         startExport(artifact.id, 'pptx', themeId, strictLayout, generateImages);
     };
 
-    const handleDocFormatSelected = (format: string) => {
-        startExport(artifact.id, format);
+    const handleDocFormatSelected = (format: string, generateImages?: boolean) => {
+        startExport(artifact.id, format, undefined, undefined, generateImages);
     };
 
     const formatSize = (bytes: number | null | undefined) => {
@@ -541,8 +591,8 @@ export function ExportButton({ artifactId, artifactType }: { artifactId: string;
         startExport(artifactId, 'pptx', themeId, strictLayout, generateImages);
     };
 
-    const handleDocFormatSelected = (format: string) => {
-        startExport(artifactId, format);
+    const handleDocFormatSelected = (format: string, generateImages?: boolean) => {
+        startExport(artifactId, format, undefined, undefined, generateImages);
     };
 
     return (

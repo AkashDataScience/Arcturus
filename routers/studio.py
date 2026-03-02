@@ -302,6 +302,7 @@ async def download_export(artifact_id: str, export_job_id: str):
         "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "pdf": "application/pdf",
+        "html": "text/html",
     }
     media_type = _EXPORT_MEDIA_TYPES.get(
         job.format.value,
