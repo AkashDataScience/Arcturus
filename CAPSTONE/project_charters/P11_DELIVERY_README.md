@@ -27,12 +27,9 @@
 - **routers/runs.py**: Uses `memory_retriever.retrieve(query)` instead of direct search
 - **Migration script** (`scripts/migrate_memories_to_neo4j.py`): Backfill existing Qdrant memories to Neo4j
 - **Enable via env**: `NEO4J_ENABLED=true`, `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`
+- **Moved RAG chunks to qdrant** Backfill existing chunks to Qdrant
 
 ### Deferred (Phase 2+)
-- Moving RAG chunks to qdrant? (RAG has qdrant option; migration script exists)
-- Moving Episodic to qdrant?
-- Moving session memories to qdrant?
-- Need to think more whether to keep Preferences/hubs in json or move — will be done as part of Phase 3 (spaces)
 - **Session-level extraction** (design doc §9.2): Single pass for memories + preferences + entities from session summary
 - **Unifying preferences** (design doc §9.3): Move preferences/evidence into Qdrant + Neo4j
 - Spaces and collections (`memory/spaces.py`)
