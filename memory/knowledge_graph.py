@@ -390,7 +390,7 @@ class KnowledgeGraph:
         self,
         entity_ids: List[str],
         user_id: Optional[str] = None,
-        depth: int = 2,
+        depth: int = 1,
     ) -> Dict[str, Any]:
         """
         Traverse graph from given entity ids. Returns related entities, memories, user context.

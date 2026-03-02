@@ -49,7 +49,7 @@ def retrieve(
     user_id = user_id or _get_user_id() or ""
     result_ids: set = set()
     memory_context = ""
-    pdb.set_trace()
+    # pdb.set_trace()
 
     # 1. Semantic recall (may return 0 — graph recall will still run)
     semantic_results = _semantic_recall(query, store, k=semantic_k)
@@ -128,7 +128,7 @@ def _entity_recall(query: str, user_id: str, kg: Any) -> List[str]:
         if entities:
             resolved = kg.resolve_entity_candidates(user_id, entities, fuzzy_threshold=0.85)
             if resolved:
-                expanded = kg.expand_from_entities(resolved, user_id=user_id, depth=2)
+                expanded = kg.expand_from_entities(resolved, user_id=user_id, depth=1)
                 return expanded.get("memory_ids", [])
         # Fallback: stop-word heuristic
         tokens = [w for w in re.findall(r"\b\w+\b", query) if w.lower() not in _STOP_WORDS and len(w) > 1]
