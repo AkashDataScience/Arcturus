@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
 import numpy as np
+import pdb
 
 try:
     from qdrant_client import QdrantClient
@@ -128,6 +129,8 @@ class QdrantVectorStore:
             session_id = payload.get("session_id") or "unknown"
             extractor = EntityExtractor()
             extracted = extractor.extract(text)
+            print(f"[QdrantVectorStore] Extracted entities {extracted} from the text {text}") # TODO
+            # pdb.set_trace()
             result = kg.ingest_memory(
                 memory_id=memory_id,
                 text=text,

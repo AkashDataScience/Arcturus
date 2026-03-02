@@ -84,6 +84,7 @@ class EntityExtractor:
             result = response.json()
             content = result.get("message", {}).get("content", "{}")
             parsed = self._parse(content)
+            print(f"[EntityExtractor] Parsed entities {parsed} from the query {query}") # TODO 
             return parsed.get("entities", [])
         except Exception:
             return []

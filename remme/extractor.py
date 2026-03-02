@@ -177,16 +177,23 @@ EXISTING RELEVANT MEMORIES:
         return memories
 
 
-def apply_preferences_to_hubs(preferences: Dict) -> List[str]:
+def apply_preferences_to_hubs(preferences) -> List[str]:
     """
     Apply extracted preferences to REMME hubs.
     
     Args:
-        preferences: Dict of preference key-value pairs from extraction
+        preferences: Dict of preference key-value pairs from extraction.
+                    If a list is passed (e.g. LLM returned {"preferences": [...]}),
+                    treat as empty or use first dict element so .get() does not fail.
         
     Returns:
         List of changes made (for logging)
     """
+    if not isinstance(preferences, dict):
+        if isinstance(preferences, list) and preferences and isinstance(preferences[0], dict):
+            preferences = preferences[0]
+        else:
+            preferences = {}
     from remme.hubs import get_preferences_hub, get_operating_context_hub, get_soft_identity_hub
     from remme.engines import get_evidence_log
     

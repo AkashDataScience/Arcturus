@@ -101,11 +101,11 @@ def retrieve(
     result_ids: set = set()
     memory_context = ""
 
-    pdb.set_trace()
+    # pdb.set_trace()
     # Build filter for session-scoped retrieval (memory-backed session routing)
     filter_metadata: Optional[Dict[str, Any]] = None
     if session_id:
-        filter_metadata = {"session_id": session_id}
+        filter_metadata = {"session_id": session_id} # TODO GG: This need to be reviewed further to ensure it doesn't limit the recall of memories
 
     # 1. Semantic recall (may return 0 — graph recall will still run)
     semantic_results = _semantic_recall(query, store, k=semantic_k, filter_metadata=filter_metadata)
@@ -192,7 +192,7 @@ def _entity_recall(query: str, user_id: str, kg: Any) -> List[str]:
     try:
         from memory.entity_extractor import EntityExtractor
         entities = EntityExtractor().extract_from_query(query)
-        pdb.set_trace()
+        # pdb.set_trace()
         if entities:
             resolved = kg.resolve_entity_candidates(user_id, entities, fuzzy_threshold=0.85)
             if resolved:

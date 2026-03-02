@@ -229,11 +229,16 @@ async def process_run(run_id: str, query: str):
                 )
 
                 def _resolve_memory_id(alias_or_id: str, existing: list) -> Optional[str]:
-                    """Resolve T001-style alias to real Qdrant point ID; pass-through UUIDs/integers."""
+                    """Resolve T001-style alias (or slug_T002) to real Qdrant point ID; pass-through UUIDs/integers."""
                     if not alias_or_id or not existing:
                         return alias_or_id
                     import re
-                    m = re.match(r"^T(\d+)$", str(alias_or_id).strip())
+                    s = str(alias_or_id).strip()
+                    # Exact T001, T002, ...
+                    m = re.match(r"^T(\d+)$", s, re.IGNORECASE)
+                    if not m:
+                        # LLM sometimes returns slug-style id, e.g. jons_office_location_T002
+                        m = re.search(r"T(\d+)$", s, re.IGNORECASE)
                     if m:
                         idx = int(m.group(1)) - 1
                         if 0 <= idx < len(existing) and existing[idx].get("id"):
