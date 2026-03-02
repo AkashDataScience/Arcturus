@@ -29,7 +29,8 @@ Neo4j stores extracted entities and relationships from Remme memories. It ties t
 | **HAS_MEMORY** | User → Memory | — | Ownership; multi-tenant |
 | **FROM_SESSION** | Memory → Session | — | Provenance; "which session produced this memory" |
 | **CONTAINS_ENTITY** | Memory → Entity | — | Memory mentions this entity |
-| **RELATED_TO** | Entity → Entity | `type`, `value`, `confidence`, `source_memory_ids` | e.g. Person -[:WORKS_AT]-> Company |
+| **Entity–Entity** | Entity → Entity | — | First-class: WORKS_AT, LOCATED_IN, MET, OWNS, PART_OF, MEMBER_OF, KNOWS, EMPLOYED_BY, LIVES_IN, BASED_IN (see `ENTITY_REL_TYPES` in knowledge_graph.py). Fallback: RELATED_TO with `type`, `value`, `confidence`, `source_memory_ids`. |
+| **RELATED_TO** | Entity → Entity | `type`, `value`, `confidence`, `source_memory_ids` | Used when extractor type is not in ENTITY_REL_TYPES |
 | **LIVES_IN** | User → Entity | `source_memory_ids` | Derived: user lives in City |
 | **WORKS_AT** | User → Entity | `source_memory_ids` | Derived: user works at Company |
 | **KNOWS** | User → Entity | `source_memory_ids` | Derived: user knows Person |
@@ -45,7 +46,7 @@ Neo4j stores extracted entities and relationships from Remme memories. It ties t
   -[:CONTAINS_ENTITY]-> (Entity {type: "Person", name: "John"})
   -[:CONTAINS_ENTITY]-> (Entity {type: "Company", name: "Google"})
 
-(Entity {name: "John"}) -[:RELATED_TO {type: "works_at", source_memory_ids: ["qdrant-123"]}]-> (Entity {name: "Google"})
+(Entity {name: "John"}) -[:WORKS_AT {source_memory_ids: ["qdrant-123"]}]-> (Entity {name: "Google"})
 
 (User) -[:LIVES_IN {source_memory_ids: ["qdrant-123"]}]-> (Entity {type: "City", name: "Morrisville"})
 ```
@@ -156,6 +157,7 @@ Or attach the file and ask to implement the design.
 - **Entity-first path:** `memory_retriever.py` runs entity recall **independently** of semantic search. Extract entities from query → resolve against Neo4j (fuzzy match, e.g. John↔Jon) → get memory_ids → fetch memories from Qdrant. Runs even when semantic returns 0.
 - **Larger k:** Semantic recall uses k=10; top 3 for direct context; all 10 for graph expansion.
 - **KnowledgeGraph:** `resolve_entity_candidates`, `get_memory_ids_for_entity_names`; `EntityExtractor.extract_from_query`.
+- **Cross-type fallback:** In `resolve_entity_candidates`, fuzzy matching uses within-type candidates first, then always includes global (all_names) fallback so a wrong NER type (e.g. "John" as Concept when graph has Person) can still match.
 
 **Tweaks pending (to be discussed in separate context):**
 

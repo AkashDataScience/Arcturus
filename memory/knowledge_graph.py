@@ -47,6 +47,14 @@ def _canonical_name(name: str) -> str:
     return name.strip().lower()
 
 
+# Entity-to-entity relationship types promoted as first-class Neo4j relationship types.
+# Extractor may send lowercase (e.g. works_at); we normalize to this set. Unknown types → RELATED_TO.
+ENTITY_REL_TYPES = frozenset({
+    "WORKS_AT", "LOCATED_IN", "MET", "OWNS", "PART_OF", "MEMBER_OF", "KNOWS",
+    "EMPLOYED_BY", "LIVES_IN", "BASED_IN",
+})
+
+
 class KnowledgeGraph:
     """
     Neo4j-backed knowledge graph for Remme memories.
@@ -258,25 +266,45 @@ class KnowledgeGraph:
         confidence: float = 1.0,
         source_memory_ids: Optional[List[str]] = None,
     ) -> None:
-        """Create RELATED_TO relationship between entities."""
-        self._run_write(
-            """
-            MATCH (a:Entity {id: $from_id}), (b:Entity {id: $to_id})
-            MERGE (a)-[r:RELATED_TO]->(b)
-            SET r.type = $rel_type,
-                r.value = $value,
-                r.confidence = $confidence,
-                r.source_memory_ids = $source_memory_ids
-            """,
-            {
-                "from_id": from_entity_id,
-                "to_id": to_entity_id,
-                "rel_type": rel_type,
-                "value": value or "",
-                "confidence": confidence,
-                "source_memory_ids": source_memory_ids or [],
-            },
-        )
+        """
+        Create entity-to-entity relationship. Uses first-class Neo4j relationship type
+        when rel_type is in ENTITY_REL_TYPES (e.g. WORKS_AT, LOCATED_IN, MET, OWNS);
+        otherwise creates RELATED_TO and stores the type in r.type for fallback.
+        """
+        raw = (rel_type or "related_to").strip()
+        rel_type_upper = raw.upper().replace("-", "_").replace(" ", "_")
+        params = {
+            "from_id": from_entity_id,
+            "to_id": to_entity_id,
+            "value": value or "",
+            "confidence": confidence,
+            "source_memory_ids": source_memory_ids or [],
+        }
+        if rel_type_upper in ENTITY_REL_TYPES:
+            # First-class relationship type (indexable, expressive queries)
+            self._run_write(
+                f"""
+                MATCH (a:Entity {{id: $from_id}}), (b:Entity {{id: $to_id}})
+                MERGE (a)-[r:{rel_type_upper}]->(b)
+                SET r.value = $value,
+                    r.confidence = $confidence,
+                    r.source_memory_ids = $source_memory_ids
+                """,
+                params,
+            )
+        else:
+            # Fallback: RELATED_TO with type stored as property
+            self._run_write(
+                """
+                MATCH (a:Entity {id: $from_id}), (b:Entity {id: $to_id})
+                MERGE (a)-[r:RELATED_TO]->(b)
+                SET r.type = $rel_type,
+                    r.value = $value,
+                    r.confidence = $confidence,
+                    r.source_memory_ids = $source_memory_ids
+                """,
+                {**params, "rel_type": raw},
+            )
 
     def create_user_entity_relationship(
         self,
@@ -431,14 +459,15 @@ class KnowledgeGraph:
         """
         if not self._enabled or not entity_ids:
             return {"entities": [], "memories": [], "user_facts": []}
-        # Simplified: get entities and their RELATED_TO neighbors
+        # Traverse all entity-entity relationship types (first-class + RELATED_TO fallback)
+        rel_types = "|".join(sorted(ENTITY_REL_TYPES) + ["RELATED_TO"])
         placeholders = ", ".join([f"$id{i}" for i in range(len(entity_ids))])
         params = {f"id{i}": eid for i, eid in enumerate(entity_ids)}
         params["user_id"] = user_id or ""
         query = f"""
             MATCH (e:Entity)
             WHERE e.id IN [{placeholders}]
-            OPTIONAL MATCH (e)-[:RELATED_TO]-(other:Entity)
+            OPTIONAL MATCH (e)-[:{rel_types}]-(other:Entity)
             OPTIONAL MATCH (m:Memory)-[:CONTAINS_ENTITY]->(e)
             WITH e, collect(DISTINCT other) AS related, collect(DISTINCT m) AS mems
             RETURN e.id AS id, e.type AS type, e.name AS name,
@@ -494,6 +523,8 @@ class KnowledgeGraph:
         """
         Resolve NER-extracted candidates against the graph.
         Lookup order: exact match (type+name), then fuzzy (threshold default 0.85).
+        Fuzzy stage: try within-type first, then global fallback so wrong NER type
+        (e.g. "John" as Concept when graph has Person) can still match.
         Returns list of entity ids for matched candidates.
         """
         if not self._enabled or not user_id or not candidates:
@@ -546,10 +577,10 @@ class KnowledgeGraph:
                 if eid not in resolved:
                     resolved.append(eid)
                 continue
-            # 2. Fuzzy match
+            # 2. Fuzzy match: within-type first, then global fallback (cross-type)
             best_score = 0
             best_id: Optional[str] = None
-            candidates_fuzzy = by_type.get(ctype, []) + ([] if ctype in by_type else all_names)
+            candidates_fuzzy = by_type.get(ctype, []) + all_names
             for ename, eid in candidates_fuzzy:
                 if not ename:
                     continue
