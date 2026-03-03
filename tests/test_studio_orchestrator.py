@@ -448,6 +448,155 @@ class TestApproveAndGenerateDraft:
         artifact_data = _run(orchestrator.approve_and_generate_draft(result["artifact_id"]))
         assert artifact_data["content_tree"]["workbook_title"] == "Financial Model"
 
+    def test_sheet_visual_repair_second_pass_triggered(self, orchestrator, monkeypatch):
+        calls = {"total": 0, "repair": 0}
+        chartable_draft = json.dumps(
+            {
+                "workbook_title": "Financial Model",
+                "tabs": [
+                    {
+                        "id": "tab1",
+                        "name": "Revenue",
+                        "headers": ["Month", "MRR"],
+                        "rows": [["Jan", 5000], ["Feb", 5500], ["Mar", 6200]],
+                        "formulas": {},
+                        "column_widths": [120, 100],
+                    }
+                ],
+            }
+        )
+
+        async def fake_generate(self, prompt):
+            calls["total"] += 1
+            p = prompt.lower()
+            if "content architect" in p:
+                return OUTLINE_RESPONSE
+            if "spreadsheet visual designer" in p:
+                calls["repair"] += 1
+                return json.dumps(
+                    {
+                        "metadata": {
+                            "visual_profile": "balanced",
+                            "palette_hint": "oceanic-blue",
+                            "chart_plan": [
+                                {
+                                    "tab_name": "Revenue",
+                                    "chart_type": "line",
+                                    "category_column": "Month",
+                                    "value_columns": ["MRR"],
+                                }
+                            ],
+                        }
+                    }
+                )
+            return chartable_draft
+
+        monkeypatch.setattr("core.model_manager.ModelManager.generate_text", fake_generate)
+
+        result = _run(orchestrator.generate_outline(
+            prompt="Create a financial model",
+            artifact_type=ArtifactType.sheet,
+        ))
+        artifact_data = _run(orchestrator.approve_and_generate_draft(result["artifact_id"]))
+        md = artifact_data["content_tree"].get("metadata", {})
+
+        assert calls["repair"] == 1
+        assert calls["total"] == 3
+        assert md.get("visual_profile") == "balanced"
+        assert isinstance(md.get("chart_plan"), list)
+        assert len(md["chart_plan"]) >= 1
+
+    def test_sheet_visual_repair_skipped_when_metadata_already_valid(self, orchestrator, monkeypatch):
+        calls = {"total": 0, "repair": 0}
+        draft_with_visual_metadata = json.dumps(
+            {
+                "workbook_title": "Financial Model",
+                "tabs": [
+                    {
+                        "id": "tab1",
+                        "name": "Revenue",
+                        "headers": ["Month", "MRR"],
+                        "rows": [["Jan", 5000], ["Feb", 5500], ["Mar", 6200]],
+                        "formulas": {},
+                        "column_widths": [120, 100],
+                    }
+                ],
+                "metadata": {
+                    "visual_profile": "balanced",
+                    "palette_hint": "oceanic-blue",
+                    "chart_plan": [
+                        {
+                            "tab_name": "Revenue",
+                            "chart_type": "line",
+                            "category_column": "Month",
+                            "value_columns": ["MRR"],
+                        }
+                    ],
+                },
+            }
+        )
+
+        async def fake_generate(self, prompt):
+            calls["total"] += 1
+            p = prompt.lower()
+            if "content architect" in p:
+                return OUTLINE_RESPONSE
+            if "spreadsheet visual designer" in p:
+                calls["repair"] += 1
+                return json.dumps({"metadata": {"visual_profile": "balanced"}})
+            return draft_with_visual_metadata
+
+        monkeypatch.setattr("core.model_manager.ModelManager.generate_text", fake_generate)
+
+        result = _run(orchestrator.generate_outline(
+            prompt="Create a financial model",
+            artifact_type=ArtifactType.sheet,
+        ))
+        _run(orchestrator.approve_and_generate_draft(result["artifact_id"]))
+
+        assert calls["repair"] == 0
+        assert calls["total"] == 2
+
+    def test_sheet_visual_repair_parse_failure_is_non_blocking(self, orchestrator, monkeypatch):
+        calls = {"repair": 0}
+        chartable_draft = json.dumps(
+            {
+                "workbook_title": "Financial Model",
+                "tabs": [
+                    {
+                        "id": "tab1",
+                        "name": "Revenue",
+                        "headers": ["Month", "MRR"],
+                        "rows": [["Jan", 5000], ["Feb", 5500], ["Mar", 6200]],
+                        "formulas": {},
+                        "column_widths": [120, 100],
+                    }
+                ],
+            }
+        )
+
+        async def fake_generate(self, prompt):
+            p = prompt.lower()
+            if "content architect" in p:
+                return OUTLINE_RESPONSE
+            if "spreadsheet visual designer" in p:
+                calls["repair"] += 1
+                return "this is not valid json"
+            return chartable_draft
+
+        monkeypatch.setattr("core.model_manager.ModelManager.generate_text", fake_generate)
+
+        result = _run(orchestrator.generate_outline(
+            prompt="Create a financial model",
+            artifact_type=ArtifactType.sheet,
+        ))
+        artifact_data = _run(orchestrator.approve_and_generate_draft(result["artifact_id"]))
+        metadata = artifact_data["content_tree"].get("metadata", {})
+
+        assert calls["repair"] == 1
+        assert artifact_data["content_tree"]["workbook_title"] == "Financial Model"
+        assert metadata.get("visual_profile") == "balanced"
+
     def test_reuses_selected_model_for_draft(self, orchestrator, monkeypatch):
         init_models = []
 

@@ -4,7 +4,6 @@ import csv
 import zipfile
 
 import openpyxl
-import pytest
 
 from core.studio.sheets.validator import validate_csv, validate_csv_zip, validate_xlsx
 
@@ -71,7 +70,64 @@ def test_validate_xlsx_result_contract(tmp_path):
     assert "warnings" in result
     assert "sheet_count" in result
     assert "sheet_names" in result
+    assert "chart_count" in result
+    assert "conditional_format_count" in result
+    assert "styled_header_sheet_count" in result
+    assert "quality_score" in result
     assert result["format"] == "xlsx"
+
+
+def test_validate_xlsx_quality_score_improves_with_styling_and_chart(tmp_path):
+    plain_path = tmp_path / "plain.xlsx"
+    rich_path = tmp_path / "rich.xlsx"
+
+    _create_valid_xlsx(
+        plain_path,
+        [("Data", ["Month", "Revenue"], [["Jan", 100], ["Feb", 200], ["Mar", 300]], {})],
+    )
+    _create_valid_xlsx(
+        rich_path,
+        [("Data", ["Month", "Revenue"], [["Jan", 100], ["Feb", 200], ["Mar", 300]], {})],
+    )
+
+    wb = openpyxl.load_workbook(str(rich_path))
+    ws = wb["Data"]
+
+    from openpyxl.chart import BarChart, Reference
+    from openpyxl.formatting.rule import ColorScaleRule
+    from openpyxl.styles import Font, PatternFill
+
+    ws["A1"].font = Font(bold=True)
+    ws["A1"].fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    ws["B1"].font = Font(bold=True)
+    ws["B1"].fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+
+    chart = BarChart()
+    chart.add_data(Reference(ws, min_col=2, min_row=1, max_row=4), titles_from_data=True)
+    chart.set_categories(Reference(ws, min_col=1, min_row=2, max_row=4))
+    ws.add_chart(chart, "D2")
+
+    ws.conditional_formatting.add(
+        "B2:B4",
+        ColorScaleRule(
+            start_type="min",
+            start_color="FEE2E2",
+            mid_type="percentile",
+            mid_value=50,
+            mid_color="FEF3C7",
+            end_type="max",
+            end_color="DCFCE7",
+        ),
+    )
+    wb.save(str(rich_path))
+    wb.close()
+
+    plain_result = validate_xlsx(plain_path)
+    rich_result = validate_xlsx(rich_path)
+
+    assert rich_result["quality_score"] > plain_result["quality_score"]
+    assert rich_result["chart_count"] >= 1
+    assert rich_result["conditional_format_count"] >= 1
 
 
 # === CSV validation ===

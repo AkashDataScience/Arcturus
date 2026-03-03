@@ -16,7 +16,12 @@ from core.schemas.studio_schema import (
     OutlineStatus,
     validate_content_tree,
 )
-from core.studio.prompts import get_draft_prompt, get_draft_prompt_with_sequence, get_outline_prompt
+from core.studio.prompts import (
+    get_draft_prompt,
+    get_draft_prompt_with_sequence,
+    get_outline_prompt,
+    get_sheet_visual_repair_prompt,
+)
 from core.studio.revision import RevisionManager, compute_change_summary
 from core.studio.storage import StudioStorage
 
@@ -171,8 +176,30 @@ class ForgeOrchestrator:
 
         # Sheet-specific: normalize content tree
         elif artifact.type == ArtifactType.sheet:
-            from core.studio.sheets.generator import normalize_sheet_content_tree
+            from core.studio.sheets.generator import (
+                merge_sheet_visual_metadata,
+                needs_sheet_visual_repair,
+                normalize_sheet_content_tree,
+            )
             content_tree_model = normalize_sheet_content_tree(content_tree_model)
+
+            if needs_sheet_visual_repair(content_tree_model):
+                try:
+                    repair_prompt = get_sheet_visual_repair_prompt(
+                        artifact.outline,
+                        content_tree_model.model_dump(mode="json"),
+                    )
+                    repair_raw = await mm.generate_text(repair_prompt)
+                    repair_parsed = parse_llm_json(repair_raw)
+                    merge_sheet_visual_metadata(
+                        content_tree_model,
+                        repair_parsed.get("metadata"),
+                    )
+                except Exception as repair_err:
+                    logger.warning(
+                        "Sheet visual repair pass failed; continuing with defaults: %s",
+                        repair_err,
+                    )
 
         content_tree = content_tree_model.model_dump(mode="json")
 

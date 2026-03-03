@@ -25,6 +25,10 @@ def validate_xlsx(
         "sheet_count": 0,
         "sheet_names": [],
         "formula_cell_count": 0,
+        "chart_count": 0,
+        "conditional_format_count": 0,
+        "styled_header_sheet_count": 0,
+        "quality_score": 0,
     }
 
     try:
@@ -41,12 +45,44 @@ def validate_xlsx(
 
     # Count formula cells
     formula_count = 0
+    chart_count = 0
+    conditional_format_count = 0
+    styled_header_sheet_count = 0
+    has_numeric_data = False
+
+    def _header_styled(sheet) -> bool:
+        styled = 0
+        header_cells = [c for c in sheet[1] if c.value not in (None, "")]
+        for cell in header_cells:
+            has_fill = (
+                cell.fill is not None
+                and cell.fill.fill_type is not None
+                and cell.fill.fill_type != "none"
+            )
+            has_bold = bool(cell.font and cell.font.bold)
+            if has_fill and has_bold:
+                styled += 1
+        return styled > 0
+
+    def _count_conditional_rules(sheet) -> int:
+        return sum(len(cf.rules) for cf in sheet.conditional_formatting)
+
     for ws in wb.worksheets:
+        chart_count += len(getattr(ws, "_charts", []))
+        conditional_format_count += _count_conditional_rules(ws)
+        if _header_styled(ws):
+            styled_header_sheet_count += 1
         for row in ws.iter_rows():
             for cell in row:
                 if isinstance(cell.value, str) and cell.value.startswith("="):
                     formula_count += 1
+                if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                    has_numeric_data = True
+
     result["formula_cell_count"] = formula_count
+    result["chart_count"] = chart_count
+    result["conditional_format_count"] = conditional_format_count
+    result["styled_header_sheet_count"] = styled_header_sheet_count
 
     # Check expected sheet names
     if expected_sheet_names is not None:
@@ -65,6 +101,34 @@ def validate_xlsx(
         result["errors"].append(
             f"Expected at least {expected_formula_cells} formula cells, found {formula_count}"
         )
+
+    if has_numeric_data and chart_count == 0:
+        result["warnings"].append(
+            "Workbook contains numeric data but no charts were detected"
+        )
+
+    # Quality score (0-100)
+    quality = 0.0
+    if result["sheet_count"] > 0:
+        quality += 35.0
+
+    if expected_formula_cells is None:
+        quality += 20.0 if formula_count > 0 else 12.0
+    elif expected_formula_cells <= 0:
+        quality += 20.0
+    else:
+        quality += 20.0 * min(formula_count / expected_formula_cells, 1.0)
+
+    if result["sheet_count"] > 0:
+        quality += 20.0 * (styled_header_sheet_count / result["sheet_count"])
+
+    if has_numeric_data:
+        quality += 15.0 if chart_count > 0 else 0.0
+        quality += 10.0 if conditional_format_count > 0 else 0.0
+    else:
+        quality += 25.0
+
+    result["quality_score"] = max(0, min(100, int(round(quality))))
 
     wb.close()
     return result

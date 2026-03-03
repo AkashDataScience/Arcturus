@@ -585,6 +585,8 @@ def test_22_sheet_outline_to_draft_to_xlsx_export(orchestrator, storage, mock_ll
     assert export_result["format"] == "xlsx"
     assert export_result["file_size_bytes"] > 0
     assert export_result["validator_results"]["valid"] is True
+    assert export_result["validator_results"]["chart_count"] >= 1
+    assert export_result["validator_results"]["quality_score"] >= 60
 
 
 def test_23_sheet_upload_analysis_to_export_pipeline(orchestrator, storage, mock_llm_sheet) -> None:
@@ -616,6 +618,8 @@ def test_23_sheet_upload_analysis_to_export_pipeline(orchestrator, storage, mock
     # 4. Export the updated artifact to XLSX
     export_result = _run(orchestrator.export_artifact(art_id, ExportFormat.xlsx))
     assert export_result["status"] == "completed"
+    assert export_result["validator_results"]["chart_count"] >= 1
+    assert export_result["validator_results"]["quality_score"] >= 60
 
 
 def test_24_sheet_invalid_upload_graceful_failure(orchestrator, storage, mock_llm_sheet) -> None:
