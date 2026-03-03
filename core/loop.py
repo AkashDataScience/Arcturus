@@ -861,6 +861,83 @@ class AgentLoop4:
             except Exception as e:
                 log_error(f"Aegis: output scanner error: {e}")
             
+            # === Safety: Anti-Hallucination Analysis (P12 Week 2) ===
+            try:
+                from safety.hallucination import analyze_for_hallucination
+                
+                # Extract sources and citations from output
+                sources = []
+                citations = []
+                
+                # Try to extract citations from output (if it's structured)
+                if isinstance(output, dict):
+                    sources = output.get("sources", [])
+                    citations = output.get("citations", [])
+                elif isinstance(output, str):
+                    # Simple heuristic: look for URLs in text
+                    import re
+                    url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+                    citations = re.findall(url_pattern, output)
+                
+                # Run hallucination analysis
+                hallucination_analysis = await analyze_for_hallucination(
+                    text=str(output),
+                    sources=sources,
+                    citations=citations,
+                    session_id=context.plan_graph.graph.get("session_id"),
+                    context={
+                        "step_id": step_id,
+                        "agent": agent_type,
+                        "analysis_timestamp": time.time()
+                    }
+                )
+                
+                # Handle analysis results
+                if hallucination_analysis.action == "block":
+                    log_safety_event(
+                        "hallucination_blocked",
+                        context={
+                            "session_id": context.plan_graph.graph.get("session_id"),
+                            "step_id": step_id,
+                            "agent": agent_type
+                        },
+                        metadata={
+                            "reason": hallucination_analysis.reasoning,
+                            "confidence": hallucination_analysis.overall_confidence,
+                            "contradictions": len(hallucination_analysis.contradictions),
+                            "unsupported_claims": len(hallucination_analysis.unsupported_claims)
+                        }
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Output blocked due to hallucination risk: {hallucination_analysis.reasoning}"
+                    }
+                elif hallucination_analysis.action == "flag":
+                    # Log the flag but allow output to continue
+                    log_safety_event(
+                        "hallucination_flagged",
+                        context={
+                            "session_id": context.plan_graph.graph.get("session_id"),
+                            "step_id": step_id,
+                            "agent": agent_type
+                        },
+                        metadata={
+                            "reason": hallucination_analysis.reasoning,
+                            "confidence": hallucination_analysis.overall_confidence,
+                            "contradictions": len(hallucination_analysis.contradictions),
+                            "unsupported_claims": len(hallucination_analysis.unsupported_claims)
+                        }
+                    )
+                    # Optionally enhance output with confidence indicators
+                    if isinstance(output, dict):
+                        output["_safety_metadata"] = {
+                            "confidence_score": hallucination_analysis.overall_confidence,
+                            "flagged_reason": hallucination_analysis.reasoning
+                        }
+                
+            except Exception as e:
+                log_error(f"Aegis: hallucination analysis error: {e}")
+            
             # Output policy evaluation (PII, content policy, abstain/block) ===
             try:
                 pe = PolicyEngine()

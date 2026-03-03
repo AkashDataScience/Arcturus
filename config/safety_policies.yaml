@@ -49,15 +49,76 @@ default:
     window_seconds: 300  # 5 minutes
     block_duration_seconds: 3600  # 1 hour
   
-  # PII detection patterns
+  # PII detection patterns (legacy support)
   pii_detection:
     enabled: true
+    use_enhanced_detector: true  # Use new enhanced PII detector
     patterns:
       email: true
       ssn: true
       credit_card: true
       phone: false  # Disabled by default
       ip_address: false
+    
+    # Enhanced PII detector configuration (Week 3)
+    enhanced:
+      enabled_types:
+        - "email"
+        - "ssn"
+        - "credit_card"
+        - "phone"
+        - "bank_account"
+        - "date_of_birth"
+        - "ip_address"
+      confidence_threshold: 0.6
+      default_redaction_level: "full"  # Options: "none", "partial", "full", "hash"
+      risk_weights:
+        ssn: 1.0
+        credit_card: 1.0
+        bank_account: 0.9
+        passport: 0.9
+        medical_id: 0.8
+        phone: 0.4
+        email: 0.3
+        ip_address: 0.3
+  
+  # Content policies (Week 3) - NEW
+  content_policies:
+    enabled: true
+    
+    # Profanity detection
+    profanity:
+      enabled: false  # Disabled by default for most use cases
+      action: "flag"   # Options: "allow", "flag", "redact", "block"
+    
+    # Hate speech detection
+    hate_speech:
+      enabled: true
+      action: "block"  # Block hate speech
+    
+    # Violence/threats detection
+    violence:
+      enabled: true
+      action: "flag"   # Flag but don't block (context matters)
+    
+    # Sensitive topics detection
+    sensitive_topics:
+      enabled: false   # Disabled by default
+      action: "flag"
+      topics:
+        medical: true
+        financial: true
+        legal: true
+  
+  # Hallucination prevention (Week 2) - NEW
+  hallucination_detection:
+    enabled: true
+    confidence_threshold: 0.4      # Block if overall confidence < 0.4
+    flag_threshold: 0.6           # Flag if confidence < 0.6
+    max_contradictions: 1         # Block if more than 1 contradiction
+    max_unsupported_claims: 3     # Flag if more than 3 unsupported claims
+    verify_citations: true        # Verify that citations support claims
+    fact_check_enabled: false     # Disabled for now (future feature)
   
   # Output scanning configuration
   output_scanning:
@@ -84,6 +145,35 @@ organizations:
       block_threshold: 3  # Stricter blocking
     output_scanning:
       strict_mode: true
+    # Enhanced policies for enterprise
+    content_policies:
+      profanity:
+        enabled: true
+        action: "block"
+      hate_speech:
+        enabled: true
+        action: "block"
+      violence:
+        enabled: true
+        action: "block"
+      sensitive_topics:
+        enabled: true
+        action: "flag"
+    hallucination_detection:
+      confidence_threshold: 0.5  # Stricter confidence requirement
+      max_contradictions: 0       # Zero tolerance for contradictions
+    pii_detection:
+      enhanced:
+        confidence_threshold: 0.5  # Lower threshold = higher sensitivity
+        enabled_types:
+          - "email"
+          - "ssn" 
+          - "credit_card"
+          - "phone"
+          - "bank_account"
+          - "date_of_birth"
+          - "passport"
+          - "medical_id"
 
 # User-specific overrides (for trusted users)
 users:
@@ -95,6 +185,15 @@ users:
         window_seconds: 60
     threat_tracking:
       warn_threshold: 5  # More lenient
+    # Relaxed policies for admin users
+    content_policies:
+      profanity:
+        enabled: false
+      violence:
+        action: "flag"  # Only flag, don't block
+    hallucination_detection:
+      confidence_threshold: 0.3  # More lenient confidence requirement
+      max_contradictions: 3       # Allow more contradictions
 
 # Custom injection patterns (domain-specific)
 custom_patterns:
