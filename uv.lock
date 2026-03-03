@@ -1064,16 +1064,16 @@ name = "fastembed"
 version = "0.7.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "huggingface-hub" },
-    { name = "loguru" },
-    { name = "mmh3" },
-    { name = "numpy" },
-    { name = "onnxruntime" },
-    { name = "pillow" },
-    { name = "py-rust-stemmers" },
-    { name = "requests" },
-    { name = "tokenizers" },
-    { name = "tqdm" },
+    { name = "huggingface-hub", marker = "python_full_version < '3.14'" },
+    { name = "loguru", marker = "python_full_version < '3.14'" },
+    { name = "mmh3", marker = "python_full_version < '3.14'" },
+    { name = "numpy", marker = "python_full_version < '3.14'" },
+    { name = "onnxruntime", marker = "python_full_version < '3.14'" },
+    { name = "pillow", marker = "python_full_version < '3.14'" },
+    { name = "py-rust-stemmers", marker = "python_full_version < '3.14'" },
+    { name = "requests", marker = "python_full_version < '3.14'" },
+    { name = "tokenizers", marker = "python_full_version < '3.14'" },
+    { name = "tqdm", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4c/c2/9c708680de1b54480161e0505f9d6d3d8eb47a1dc1a1f7f3c5106ba355d2/fastembed-0.7.4.tar.gz", hash = "sha256:8b8a4ea860ca295002f4754e8f5820a636e1065a9444959e18d5988d7f27093b", size = 68807, upload-time = "2025-12-05T12:08:10.447Z" }
 wheels = [
@@ -2502,8 +2502,8 @@ name = "loguru"
 version = "0.7.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "win32-setctime", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "python_full_version < '3.14' and sys_platform == 'win32'" },
+    { name = "win32-setctime", marker = "python_full_version < '3.14' and sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6", size = 63559, upload-time = "2024-12-06T11:20:56.608Z" }
 wheels = [
@@ -3290,6 +3290,18 @@ wheels = [
 ]
 
 [[package]]
+name = "neo4j"
+version = "6.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1b/01/d6ce65e4647f6cb2b9cca3b813978f7329b54b4e36660aaec1ddf0ccce7a/neo4j-6.1.0.tar.gz", hash = "sha256:b5dde8c0d8481e7b6ae3733569d990dd3e5befdc5d452f531ad1884ed3500b84", size = 239629, upload-time = "2026-01-12T11:27:34.777Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/5c/ee71e2dd955045425ef44283f40ba1da67673cf06404916ca2950ac0cd39/neo4j-6.1.0-py3-none-any.whl", hash = "sha256:3bd93941f3a3559af197031157220af9fd71f4f93a311db687bd69ffa417b67d", size = 325326, upload-time = "2026-01-12T11:27:33.196Z" },
+]
+
+[[package]]
 name = "nest-asyncio"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4048,6 +4060,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/31/5e/03966aedfbfcbb4d5f8aa042452d3361f325b963ebbadddac05b122e47dd/pillow-11.3.0-pp311-pypy311_pp73-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5418b53c0d59b3824d05e029669efa023bbef0f3e92e75ec8428f3799487f361", size = 4957170, upload-time = "2025-07-01T09:16:23.762Z" },
     { url = "https://files.pythonhosted.org/packages/cc/2d/e082982aacc927fc2cab48e1e731bdb1643a1406acace8bed0900a61464e/pillow-11.3.0-pp311-pypy311_pp73-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:504b6f59505f08ae014f724b6207ff6222662aab5cc9542577fb084ed0676ac7", size = 5581505, upload-time = "2025-07-01T09:16:25.593Z" },
     { url = "https://files.pythonhosted.org/packages/34/e7/ae39f538fd6844e982063c3a5e4598b8ced43b9633baa3a85ef33af8c05c/pillow-11.3.0-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:c84d689db21a1c397d001aa08241044aa2069e7587b398c8cc63020390b1c1b8", size = 6984598, upload-time = "2025-07-01T09:16:27.732Z" },
+]
+
+[[package]]
+name = "piper-tts"
+version = "1.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "onnxruntime" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b9/2f/df92a56383bbfb7a3a35ff539ba4081932bef0daf920ec089ab7269e1493/piper_tts-1.4.1.tar.gz", hash = "sha256:bf0640db9fe512392f0cf570d445f76b3894b29fbab6f81be42b784fd8f0afe0", size = 4364811, upload-time = "2026-02-05T09:58:25.233Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2b/1c/e9a6695e19aa5c80b3ac4f70dd432fe3dcf99519458ad149f73af5b0fa44/piper_tts-1.4.1-cp39-abi3-macosx_10_9_x86_64.whl", hash = "sha256:76467df3abe0a0dd8d53e4e7d769ceb1669796e7188954182257be4cf79ddae0", size = 13822406, upload-time = "2026-02-05T09:58:13.246Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/56/633c64944a9ae13d5183989de1519e5eb30e5e6b668942d97ca03b04c53a/piper_tts-1.4.1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:a99d93a2eb2805aa7059996069f8448c86ce7704200ec0bf9f9099f035494dc7", size = 13830418, upload-time = "2026-02-05T09:58:15.561Z" },
+    { url = "https://files.pythonhosted.org/packages/df/95/c4c4163cf0f636eec0ccb3adc63c70fb74334ff28e41e176f0ca0415496e/piper_tts-1.4.1-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3dbc990b4e28c680a44e26dc7a880b3e1068e06ffc1deecc8690929895ffb005", size = 13841987, upload-time = "2026-02-05T09:58:18.259Z" },
+    { url = "https://files.pythonhosted.org/packages/39/42/b44ae16ef80d86173518aafe2a493a826b46f9fe4fba1b82cd575117d5ac/piper_tts-1.4.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5aa533364c15248d2932bcc362eb0740de7cd28dc34233de8df2ee3c6f2adf00", size = 13841873, upload-time = "2026-02-05T09:58:20.428Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/d9/bc628449230681cf49af5e289974a076b22e98ecd017108ef0e679be4e00/piper_tts-1.4.1-cp39-abi3-win_amd64.whl", hash = "sha256:058c025f2a929180d034ed8c333f6b9dd286178703be2133efbafba7f4db13ff", size = 13831941, upload-time = "2026-02-05T09:58:22.562Z" },
 ]
 
 [[package]]
@@ -5307,6 +5335,7 @@ dependencies = [
     { name = "mem0ai" },
     { name = "memo" },
     { name = "nemoguardrails" },
+    { name = "neo4j" },
     { name = "networkx" },
     { name = "noisereduce" },
     { name = "numpy" },
@@ -5316,6 +5345,7 @@ dependencies = [
     { name = "opentelemetry-sdk" },
     { name = "openwakeword" },
     { name = "pillow" },
+    { name = "piper-tts" },
     { name = "playwright" },
     { name = "pocketsphinx" },
     { name = "psutil" },
@@ -5366,6 +5396,7 @@ requires-dist = [
     { name = "mem0ai", specifier = ">=1.0.4" },
     { name = "memo", specifier = ">=0.2.4" },
     { name = "nemoguardrails", specifier = ">=0.20.0" },
+    { name = "neo4j", specifier = ">=5.14.0" },
     { name = "networkx", specifier = ">=3.4.2" },
     { name = "noisereduce", specifier = ">=3.0.3" },
     { name = "numpy", specifier = ">=2.4.0" },
@@ -5375,6 +5406,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.28.0" },
     { name = "openwakeword", specifier = ">=0.6.0" },
     { name = "pillow", specifier = ">=11.2.1" },
+    { name = "piper-tts", specifier = ">=1.2.0" },
     { name = "playwright", specifier = ">=1.52.0" },
     { name = "pocketsphinx", specifier = ">=5.0.4" },
     { name = "psutil", specifier = ">=7.2.2" },
@@ -5842,7 +5874,7 @@ name = "tflite-runtime"
 version = "2.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "python_full_version < '3.14' or sys_platform != 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8f/a6/02d68cb62cd221589a0ff055073251d883936237c9c990e34a1d7cecd06f/tflite_runtime-2.14.0-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:195ab752e7e57329a68e54dd3dd5439fad888b9bff1be0f0dc042a3237a90e4d", size = 2414486, upload-time = "2023-10-03T21:15:44.331Z" },
