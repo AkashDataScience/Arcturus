@@ -8,6 +8,11 @@ from core.json_parser import parse_llm_json
 from core.model_manager import ModelManager
 
 logger = logging.getLogger(__name__)
+
+
+class ConflictError(Exception):
+    """Raised when optimistic concurrency check fails (409 Conflict)."""
+    pass
 from core.schemas.studio_schema import (
     Artifact,
     ArtifactType,
@@ -659,6 +664,129 @@ class ForgeOrchestrator:
         self.storage.save_artifact(artifact)
 
         return artifact.model_dump(mode="json")
+
+    async def edit_artifact(
+        self,
+        artifact_id: str,
+        instruction: str,
+        base_revision_id: Optional[str] = None,
+        mode: str = "apply",
+        _patch_override: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Apply a chat-driven edit to an existing artifact.
+
+        Args:
+            artifact_id: Target artifact UUID
+            instruction: User's edit instruction (e.g. "Change slide 3 title to ...")
+            base_revision_id: Expected current revision id for optimistic concurrency
+            mode: "apply" (default) or "dry_run" (preview without persisting)
+            _patch_override: Test hook — bypass LLM and use this patch directly
+
+        Returns:
+            Dict with artifact data, revision info, diff, and any warnings
+
+        Raises:
+            ValueError: On invalid artifact, missing content tree, or patch failure
+            ConflictError: When base_revision_id doesn't match current revision_head_id
+        """
+        from core.studio.editing.diff import compute_revision_diff, summarize_diff_highlights
+        from core.studio.editing.patch_apply import apply_patch_to_content_tree
+
+        # 0. Validate mode
+        if mode not in ("apply", "dry_run"):
+            raise ValueError(f"Invalid edit mode: {mode!r}. Must be 'apply' or 'dry_run'")
+
+        # 1. Load artifact
+        artifact = self.storage.load_artifact(artifact_id)
+        if artifact is None:
+            raise ValueError(f"Artifact not found: {artifact_id}")
+        if artifact.content_tree is None:
+            raise ValueError(f"Artifact {artifact_id} has no content tree (approve outline first)")
+
+        # 2. Optimistic concurrency check
+        if base_revision_id is not None and artifact.revision_head_id != base_revision_id:
+            raise ConflictError(
+                f"Conflict: expected revision {base_revision_id}, "
+                f"but current is {artifact.revision_head_id}"
+            )
+
+        # 3. Plan patch
+        if _patch_override is not None:
+            patch_dict = _patch_override
+        else:
+            from core.studio.editing.planner import plan_patch
+            patch_dict = await plan_patch(
+                artifact_type=artifact.type.value,
+                instruction=instruction,
+                content_tree=artifact.content_tree,
+                outline=artifact.outline.model_dump(mode="json") if artifact.outline else None,
+            )
+
+        # 4. Apply patch
+        new_tree, warnings = apply_patch_to_content_tree(
+            artifact.type.value, artifact.content_tree, patch_dict
+        )
+
+        # 5. Compute diff
+        diff = compute_revision_diff(
+            artifact.type.value, artifact.content_tree, new_tree
+        )
+
+        # 6. Dry run — return preview without persisting
+        if mode == "dry_run":
+            return {
+                "artifact_id": artifact_id,
+                "mode": "dry_run",
+                "patch": patch_dict,
+                "diff": diff,
+                "warnings": warnings,
+                "change_summary": summarize_diff_highlights(diff.get("highlights", [])),
+            }
+
+        # 7. No changes — return with warning, no revision
+        if diff["stats"]["paths_changed"] == 0:
+            return {
+                **artifact.model_dump(mode="json"),
+                "edit_result": {
+                    "status": "no_changes",
+                    "warnings": warnings + ["No changes detected from this edit"],
+                },
+            }
+
+        # 8. Persist — create revision with diff/patch/edit_instruction
+        change_summary = summarize_diff_highlights(diff.get("highlights", []))
+        revision = self.revision_manager.create_revision(
+            artifact_id=artifact_id,
+            content_tree=new_tree,
+            change_summary=change_summary,
+            parent_revision_id=artifact.revision_head_id,
+        )
+
+        # Store edit metadata on the revision
+        rev_loaded = self.storage.load_revision(artifact_id, revision.id)
+        if rev_loaded:
+            rev_loaded.edit_instruction = instruction
+            rev_loaded.patch = patch_dict
+            rev_loaded.diff = diff
+            self.storage.save_revision(rev_loaded)
+
+        # Update artifact
+        artifact.content_tree = new_tree
+        artifact.revision_head_id = revision.id
+        artifact.updated_at = datetime.now(timezone.utc)
+        self.storage.save_artifact(artifact)
+
+        return {
+            **artifact.model_dump(mode="json"),
+            "edit_result": {
+                "status": "applied",
+                "revision_id": revision.id,
+                "patch": patch_dict,
+                "diff": diff,
+                "warnings": warnings,
+                "change_summary": change_summary,
+            },
+        }
 
 
 def _parse_outline_item(data: dict) -> OutlineItem:

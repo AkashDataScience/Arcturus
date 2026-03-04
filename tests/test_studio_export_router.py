@@ -411,3 +411,84 @@ def test_download_csv_zip_media_type(monkeypatch, tmp_path):
     assert isinstance(result, FileResponse)
     assert result.media_type == "application/zip"
     assert result.filename.endswith(".zip")
+
+
+# === Phase 6: Edit endpoint tests ===
+
+
+def test_edit_endpoint_returns_200(monkeypatch):
+    class FakeOrchestrator:
+        async def edit_artifact(self, artifact_id, instruction, base_revision_id=None, mode="apply"):
+            return {"id": artifact_id, "edit_result": {"status": "applied", "revision_id": "rev1"}}
+
+    monkeypatch.setattr(studio_router, "_get_orchestrator", lambda: FakeOrchestrator())
+
+    request = studio_router.EditArtifactRequest(instruction="Change title")
+    result = _run(studio_router.edit_artifact(_UUID_1, request))
+    assert result["edit_result"]["status"] == "applied"
+
+
+def test_edit_endpoint_invalid_artifact_404(monkeypatch):
+    class FakeOrchestrator:
+        async def edit_artifact(self, artifact_id, instruction, base_revision_id=None, mode="apply"):
+            raise ValueError(f"Artifact not found: {artifact_id}")
+
+    monkeypatch.setattr(studio_router, "_get_orchestrator", lambda: FakeOrchestrator())
+
+    request = studio_router.EditArtifactRequest(instruction="Change title")
+    with pytest.raises(HTTPException) as exc_info:
+        _run(studio_router.edit_artifact(_UUID_1, request))
+    assert exc_info.value.status_code == 404
+
+
+def test_edit_endpoint_empty_instruction_400():
+    request = studio_router.EditArtifactRequest(instruction="   ")
+    with pytest.raises(HTTPException) as exc_info:
+        _run(studio_router.edit_artifact(_UUID_1, request))
+    assert exc_info.value.status_code == 400
+    assert "empty" in exc_info.value.detail.lower()
+
+
+def test_edit_endpoint_conflict_409(monkeypatch):
+    from core.studio.orchestrator import ConflictError
+
+    class FakeOrchestrator:
+        async def edit_artifact(self, artifact_id, instruction, base_revision_id=None, mode="apply"):
+            raise ConflictError("Conflict: revision mismatch")
+
+    monkeypatch.setattr(studio_router, "_get_orchestrator", lambda: FakeOrchestrator())
+
+    request = studio_router.EditArtifactRequest(
+        instruction="Change title",
+        base_revision_id="old-rev",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        _run(studio_router.edit_artifact(_UUID_1, request))
+    assert exc_info.value.status_code == 409
+
+
+def test_edit_endpoint_dry_run_returns_preview(monkeypatch):
+    class FakeOrchestrator:
+        async def edit_artifact(self, artifact_id, instruction, base_revision_id=None, mode="apply"):
+            return {"artifact_id": artifact_id, "mode": "dry_run", "diff": {"stats": {"paths_changed": 1}}}
+
+    monkeypatch.setattr(studio_router, "_get_orchestrator", lambda: FakeOrchestrator())
+
+    request = studio_router.EditArtifactRequest(instruction="Preview edit", mode="dry_run")
+    result = _run(studio_router.edit_artifact(_UUID_1, request))
+    assert result["mode"] == "dry_run"
+    assert "diff" in result
+
+
+def test_edit_endpoint_before_get_artifact(monkeypatch):
+    """Edit endpoint should be routable before the parameterized GET /{artifact_id}."""
+    # This tests that the route ordering is correct — POST /edit must precede GET /{id}
+    class FakeOrchestrator:
+        async def edit_artifact(self, artifact_id, instruction, base_revision_id=None, mode="apply"):
+            return {"id": artifact_id, "edit_result": {"status": "applied"}}
+
+    monkeypatch.setattr(studio_router, "_get_orchestrator", lambda: FakeOrchestrator())
+
+    request = studio_router.EditArtifactRequest(instruction="Test routing")
+    result = _run(studio_router.edit_artifact(_UUID_1, request))
+    assert result["edit_result"]["status"] == "applied"

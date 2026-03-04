@@ -941,3 +941,147 @@ class TestSheetUploadAnalysis:
         tab_names = [t["name"] for t in updated["content_tree"]["tabs"]]
         assert "Uploaded_Data" in tab_names
         assert "Summary_Stats" in tab_names
+
+
+# === Phase 6: Edit Loop Tests ===
+
+
+class TestEditArtifact:
+    """Tests for edit_artifact using _patch_override (no real LLM)."""
+
+    def _make_slides_patch(self, index=2, new_title="Edited Title"):
+        return {
+            "artifact_type": "slides",
+            "target": {"kind": "slide_index", "index": index},
+            "ops": [{"op": "SET", "path": "title", "value": new_title}],
+            "summary": f"Update slide {index} title",
+        }
+
+    def _make_doc_patch(self, section_id="sec1", new_content="Edited content."):
+        return {
+            "artifact_type": "document",
+            "target": {"kind": "section_id", "id": section_id},
+            "ops": [{"op": "SET", "path": "content", "value": new_content}],
+            "summary": f"Update section {section_id}",
+        }
+
+    def _make_sheet_patch(self, tab_name="Revenue", new_value=9999):
+        return {
+            "artifact_type": "sheet",
+            "target": {"kind": "tab_name", "name": tab_name},
+            "ops": [{"op": "SET", "path": "rows[0][1]", "value": new_value}],
+            "summary": f"Update {tab_name} data",
+        }
+
+    def test_edit_artifact_creates_revision(self, orchestrator, storage, mock_llm_slides):
+        result = _run(orchestrator.generate_outline("Create slides", ArtifactType.slides))
+        _run(orchestrator.approve_and_generate_draft(result["artifact_id"]))
+
+        edit_result = _run(orchestrator.edit_artifact(
+            result["artifact_id"],
+            instruction="Change slide 2 title",
+            _patch_override=self._make_slides_patch(),
+        ))
+        assert edit_result["edit_result"]["status"] == "applied"
+        assert edit_result["edit_result"]["revision_id"] is not None
+
+        revisions = storage.list_revisions(result["artifact_id"])
+        assert len(revisions) == 2  # initial + edit
+
+    def test_edit_artifact_no_op_no_revision(self, orchestrator, storage, mock_llm_slides):
+        result = _run(orchestrator.generate_outline("Create slides", ArtifactType.slides))
+        draft = _run(orchestrator.approve_and_generate_draft(result["artifact_id"]))
+
+        # SET with same value → no-op
+        current_title = draft["content_tree"]["slides"][1]["title"]
+        noop_patch = self._make_slides_patch(index=2, new_title=current_title)
+
+        edit_result = _run(orchestrator.edit_artifact(
+            result["artifact_id"],
+            instruction="No change",
+            _patch_override=noop_patch,
+        ))
+        assert edit_result["edit_result"]["status"] == "no_changes"
+        revisions = storage.list_revisions(result["artifact_id"])
+        assert len(revisions) == 1  # only initial, no new revision
+
+    def test_edit_artifact_conflict_raises(self, orchestrator, storage, mock_llm_slides):
+        from core.studio.orchestrator import ConflictError
+        result = _run(orchestrator.generate_outline("Create slides", ArtifactType.slides))
+        _run(orchestrator.approve_and_generate_draft(result["artifact_id"]))
+
+        with pytest.raises(ConflictError):
+            _run(orchestrator.edit_artifact(
+                result["artifact_id"],
+                instruction="Change title",
+                base_revision_id="wrong-revision-id",
+                _patch_override=self._make_slides_patch(),
+            ))
+
+    def test_edit_artifact_dry_run_no_persist(self, orchestrator, storage, mock_llm_slides):
+        result = _run(orchestrator.generate_outline("Create slides", ArtifactType.slides))
+        _run(orchestrator.approve_and_generate_draft(result["artifact_id"]))
+
+        edit_result = _run(orchestrator.edit_artifact(
+            result["artifact_id"],
+            instruction="Preview edit",
+            mode="dry_run",
+            _patch_override=self._make_slides_patch(),
+        ))
+        assert edit_result["mode"] == "dry_run"
+        assert "diff" in edit_result
+        assert "patch" in edit_result
+
+        # Should NOT have created a new revision
+        revisions = storage.list_revisions(result["artifact_id"])
+        assert len(revisions) == 1
+
+    def test_edit_artifact_slides_export_after_edit(self, orchestrator, storage, mock_llm_slides):
+        from core.schemas.studio_schema import ExportFormat
+        result = _run(orchestrator.generate_outline("Create slides", ArtifactType.slides))
+        _run(orchestrator.approve_and_generate_draft(result["artifact_id"]))
+        _run(orchestrator.edit_artifact(
+            result["artifact_id"],
+            instruction="Edit slide 2",
+            _patch_override=self._make_slides_patch(),
+        ))
+
+        # Export should still work after edit
+        job = _run(orchestrator.export_artifact(result["artifact_id"], export_format=ExportFormat.pptx))
+        assert job["status"] == "completed"
+
+    def test_edit_artifact_document_export_after_edit(self, orchestrator, storage, mock_llm_document):
+        from core.schemas.studio_schema import ExportFormat
+        result = _run(orchestrator.generate_outline("Write report", ArtifactType.document))
+        _run(orchestrator.approve_and_generate_draft(result["artifact_id"]))
+        _run(orchestrator.edit_artifact(
+            result["artifact_id"],
+            instruction="Update intro",
+            _patch_override=self._make_doc_patch(),
+        ))
+
+        job = _run(orchestrator.export_artifact(result["artifact_id"], export_format=ExportFormat.docx))
+        assert job["status"] == "completed"
+
+    def test_edit_artifact_sheet_export_after_edit(self, orchestrator, storage, mock_llm_sheet):
+        from core.schemas.studio_schema import ExportFormat
+        result = _run(orchestrator.generate_outline("Create model", ArtifactType.sheet))
+        _run(orchestrator.approve_and_generate_draft(result["artifact_id"]))
+        _run(orchestrator.edit_artifact(
+            result["artifact_id"],
+            instruction="Update revenue",
+            _patch_override=self._make_sheet_patch(),
+        ))
+
+        job = _run(orchestrator.export_artifact(result["artifact_id"], export_format=ExportFormat.xlsx))
+        assert job["status"] == "completed"
+
+    def test_edit_artifact_no_content_tree_rejected(self, orchestrator, storage, mock_llm_slides):
+        result = _run(orchestrator.generate_outline("Create slides", ArtifactType.slides))
+        # Don't approve — no content tree
+        with pytest.raises(ValueError, match="no content tree"):
+            _run(orchestrator.edit_artifact(
+                result["artifact_id"],
+                instruction="Edit something",
+                _patch_override=self._make_slides_patch(),
+            ))

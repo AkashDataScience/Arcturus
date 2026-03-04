@@ -663,3 +663,156 @@ def test_25_sheet_export_param_gating_enforced(orchestrator, storage, mock_llm_s
 
     with pytest.raises(ValueError, match="generate_images"):
         _run(orchestrator.export_artifact(art_id, ExportFormat.xlsx, generate_images=True))
+
+
+# === Phase 6: Edit Loop Integration Tests ===
+
+
+def test_26_slides_edit_loop_pipeline(orchestrator, storage, mock_llm) -> None:
+    """Full slides pipeline: outline → draft → edit → verify revision + content change."""
+    result = _run(orchestrator.generate_outline(
+        prompt="Create a pitch deck",
+        artifact_type=ArtifactType.slides,
+    ))
+    art_id = result["artifact_id"]
+    art_data = _run(orchestrator.approve_and_generate_draft(art_id))
+    rev_before = art_data["revision_head_id"]
+    ct_before = art_data["content_tree"]
+
+    # Edit slide 2 title using _patch_override (deterministic, no LLM)
+    patch = {
+        "artifact_type": "slides",
+        "target": {"kind": "slide_index", "index": 2},
+        "ops": [{"op": "SET", "path": "title", "value": "Updated Problem Statement"}],
+        "summary": "Rename slide 2",
+    }
+    edit_result = _run(orchestrator.edit_artifact(
+        art_id, "Rename slide 2 to Updated Problem Statement",
+        base_revision_id=rev_before,
+        _patch_override=patch,
+    ))
+
+    # Verify edit applied
+    assert edit_result["edit_result"]["status"] == "applied"
+    assert edit_result["edit_result"]["diff"]["stats"]["paths_changed"] > 0
+
+    # Verify revision advanced
+    loaded = storage.load_artifact(art_id)
+    assert loaded.revision_head_id != rev_before
+
+    # Verify content tree changed
+    new_ct = loaded.content_tree
+    assert new_ct["slides"][1]["title"] == "Updated Problem Statement"
+
+    # Verify revision has edit metadata
+    new_rev_id = edit_result["edit_result"]["revision_id"]
+    latest = storage.load_revision(art_id, new_rev_id)
+    assert latest.edit_instruction == "Rename slide 2 to Updated Problem Statement"
+    assert latest.patch is not None
+    assert latest.diff is not None
+
+
+def test_27_document_edit_loop_pipeline(orchestrator, storage, mock_llm_document) -> None:
+    """Full document pipeline: outline → draft → edit → verify revision + export DOCX."""
+    result = _run(orchestrator.generate_outline(
+        prompt="Write a technical specification",
+        artifact_type=ArtifactType.document,
+    ))
+    art_id = result["artifact_id"]
+    art_data = _run(orchestrator.approve_and_generate_draft(art_id))
+    rev_before = art_data["revision_head_id"]
+
+    # Edit section content
+    patch = {
+        "artifact_type": "document",
+        "target": {"kind": "section_id", "id": "sec1"},
+        "ops": [{"op": "SET", "path": "content", "value": "Revised introduction for v2."}],
+        "summary": "Update introduction",
+    }
+    edit_result = _run(orchestrator.edit_artifact(
+        art_id, "Revise the introduction",
+        base_revision_id=rev_before,
+        _patch_override=patch,
+    ))
+    assert edit_result["edit_result"]["status"] == "applied"
+
+    # Verify content change persisted
+    loaded = storage.load_artifact(art_id)
+    sec1 = loaded.content_tree["sections"][0]
+    assert sec1["content"] == "Revised introduction for v2."
+
+    # Export DOCX after edit
+    export_result = _run(orchestrator.export_artifact(art_id, ExportFormat.docx))
+    assert export_result["status"] == "completed"
+    assert export_result["format"] == "docx"
+
+
+def test_28_sheet_edit_loop_pipeline(orchestrator, storage, mock_llm_sheet) -> None:
+    """Full sheet pipeline: outline → draft → edit → verify revision + export XLSX."""
+    result = _run(orchestrator.generate_outline(
+        prompt="Create a sales report spreadsheet",
+        artifact_type=ArtifactType.sheet,
+    ))
+    art_id = result["artifact_id"]
+    art_data = _run(orchestrator.approve_and_generate_draft(art_id))
+    rev_before = art_data["revision_head_id"]
+
+    # Edit: update a cell value
+    patch = {
+        "artifact_type": "sheet",
+        "target": {"kind": "tab_name", "name": "Revenue"},
+        "ops": [{"op": "SET", "path": "rows[0][1]", "value": 9999}],
+        "summary": "Update Jan revenue",
+    }
+    edit_result = _run(orchestrator.edit_artifact(
+        art_id, "Update January revenue to 9999",
+        base_revision_id=rev_before,
+        _patch_override=patch,
+    ))
+    assert edit_result["edit_result"]["status"] == "applied"
+
+    # Verify cell changed
+    loaded = storage.load_artifact(art_id)
+    tab = loaded.content_tree["tabs"][0]
+    assert tab["rows"][0][1] == 9999
+
+    # Export XLSX after edit
+    export_result = _run(orchestrator.export_artifact(art_id, ExportFormat.xlsx))
+    assert export_result["status"] == "completed"
+    assert export_result["format"] == "xlsx"
+
+
+def test_29_edit_conflict_detection(orchestrator, storage, mock_llm) -> None:
+    """Optimistic concurrency: stale base_revision_id triggers ConflictError."""
+    from core.studio.orchestrator import ConflictError
+
+    result = _run(orchestrator.generate_outline(
+        prompt="Create a pitch deck",
+        artifact_type=ArtifactType.slides,
+    ))
+    art_id = result["artifact_id"]
+    art_data = _run(orchestrator.approve_and_generate_draft(art_id))
+    rev_v1 = art_data["revision_head_id"]
+
+    # First edit succeeds
+    patch1 = {
+        "artifact_type": "slides",
+        "target": {"kind": "slide_index", "index": 1},
+        "ops": [{"op": "SET", "path": "title", "value": "Edit 1"}],
+        "summary": "First edit",
+    }
+    _run(orchestrator.edit_artifact(
+        art_id, "First edit", base_revision_id=rev_v1, _patch_override=patch1
+    ))
+
+    # Second edit with stale rev_v1 should fail
+    patch2 = {
+        "artifact_type": "slides",
+        "target": {"kind": "slide_index", "index": 1},
+        "ops": [{"op": "SET", "path": "title", "value": "Edit 2"}],
+        "summary": "Second edit",
+    }
+    with pytest.raises(ConflictError):
+        _run(orchestrator.edit_artifact(
+            art_id, "Second edit", base_revision_id=rev_v1, _patch_override=patch2
+        ))

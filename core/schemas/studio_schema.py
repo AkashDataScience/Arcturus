@@ -259,6 +259,9 @@ class Revision(BaseModel):
     change_summary: str
     content_tree_snapshot: Dict[str, Any]
     created_at: datetime
+    edit_instruction: Optional[str] = Field(default=None, description="User instruction that triggered this edit")
+    patch: Optional[Dict[str, Any]] = Field(default=None, description="Patch that was applied to produce this revision")
+    diff: Optional[Dict[str, Any]] = Field(default=None, description="Computed diff between previous and current content trees")
 
 
 class Asset(BaseModel):

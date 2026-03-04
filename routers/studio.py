@@ -2,9 +2,9 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, ValidationError
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 
 from core.schemas.studio_schema import ArtifactType, ExportFormat, ExportStatus
 from core.studio.orchestrator import ForgeOrchestrator
@@ -25,6 +25,12 @@ class CreateArtifactRequest(BaseModel):
 class ApproveOutlineRequest(BaseModel):
     approved: bool = True
     modifications: Optional[Dict] = None
+
+
+class EditArtifactRequest(BaseModel):
+    instruction: str
+    base_revision_id: Optional[str] = None
+    mode: Literal["apply", "dry_run"] = Field(default="apply", description="'apply' or 'dry_run'")
 
 
 class ExportArtifactRequest(BaseModel):
@@ -132,6 +138,35 @@ async def approve_outline(artifact_id: str, request: ApproveOutlineRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/{artifact_id}/edit")
+async def edit_artifact(artifact_id: str, request: EditArtifactRequest):
+    """Apply a chat-driven edit to an existing artifact."""
+    _validate_artifact_id(artifact_id)
+    if not request.instruction or not request.instruction.strip():
+        raise HTTPException(status_code=400, detail="Edit instruction must not be empty")
+    try:
+        from core.studio.orchestrator import ConflictError
+        orchestrator = _get_orchestrator()
+        result = await orchestrator.edit_artifact(
+            artifact_id=artifact_id,
+            instruction=request.instruction.strip(),
+            base_revision_id=request.base_revision_id,
+            mode=request.mode,
+        )
+        return result
+    except ConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(status_code=404, detail=detail)
+        raise HTTPException(status_code=400, detail=detail)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # --- Static GET routes MUST come before /{artifact_id} ---
 
 @router.get("/themes")
@@ -188,6 +223,30 @@ async def list_artifacts():
         return storage.list_artifacts()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("")
+async def clear_all_artifacts():
+    """Delete all artifacts and their exports."""
+    try:
+        storage = get_studio_storage()
+        artifacts = storage.list_artifacts()
+        for a in artifacts:
+            storage.delete_artifact(a["id"])
+        return {"deleted": len(artifacts)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{artifact_id}")
+async def delete_artifact(artifact_id: str):
+    """Delete a single artifact by ID."""
+    _validate_artifact_id(artifact_id)
+    storage = get_studio_storage()
+    if storage.load_artifact(artifact_id) is None:
+        raise HTTPException(status_code=404, detail=f"Artifact not found: {artifact_id}")
+    storage.delete_artifact(artifact_id)
+    return Response(status_code=204)
 
 
 @router.get("/{artifact_id}/revisions")

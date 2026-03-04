@@ -199,6 +199,20 @@ export const api = {
         return `${API_BASE}/studio/${artifactId}/exports/${jobId}/download`;
     },
 
+    deleteArtifact: async (id: string): Promise<void> => {
+        await axios.delete(`${API_BASE}/studio/${id}`);
+    },
+
+    clearAllArtifacts: async (): Promise<{ deleted: number }> => {
+        const res = await axios.delete(`${API_BASE}/studio`);
+        return res.data;
+    },
+
+    editArtifact: async (artifactId: string, payload: { instruction: string; base_revision_id?: string; mode?: string }): Promise<any> => {
+        const res = await axios.post(`${API_BASE}/studio/${artifactId}/edit`, payload);
+        return res.data;
+    },
+
     analyzeSheetUpload: async (artifactId: string, file: File): Promise<any> => {
         const formData = new FormData();
         formData.append('file', file);

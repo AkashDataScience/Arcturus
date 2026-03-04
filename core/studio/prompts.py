@@ -369,3 +369,80 @@ Rules:
 - Prefer summary, stats, or pivot-like tabs when available
 - If no chartable numeric data exists, return an empty chart_plan and visual_profile "balanced"
 - Return ONLY the JSON object, no markdown fences or explanations"""
+
+
+def get_edit_prompt(artifact_type: str, instruction: str, content_tree_json: str, target_map: str) -> str:
+    """Build a prompt requesting a structured Patch JSON from the LLM."""
+    return f"""You are a content editor. The user wants to modify an existing {artifact_type} artifact.
+
+User instruction: {instruction}
+
+Current content tree (JSON):
+{content_tree_json}
+
+Available targets:
+{target_map}
+
+Your task: Generate a Patch JSON that applies the user's instruction.
+
+Return ONLY valid JSON in this exact format:
+{{
+  "artifact_type": "{artifact_type}",
+  "target": {{
+    "kind": "<target_kind>",
+    ... target-specific fields ...
+  }},
+  "ops": [
+    {{
+      "op": "SET|INSERT_AFTER|DELETE",
+      "path": "<JSONPath-like path relative to target>",
+      "value": "<new value for SET>",
+      "item": "<item to insert for INSERT_AFTER>",
+      "id_key": "<key for idempotency on INSERT_AFTER>"
+    }}
+  ],
+  "summary": "Human-readable summary of the change"
+}}
+
+Target kinds:
+- For slides: "deck" (for deck-level properties like deck_title), "slide_index" (with "index": 1-based), "slide_id" (with "id"), "slide_element" (with "element_id")
+- For documents: "section_id" (with "id"), "heading_contains" (with "text")
+- For sheets: "tab_name" (with "name"), "cell_range" (with "tab_name" and "a1")
+
+Operation types:
+- SET: Replace a value at the given path. Include "value".
+- INSERT_AFTER: Append an item to a list at the given path. Include "item" and optionally "id_key".
+- DELETE: Remove the value at the given path.
+
+Rules:
+- Path is relative to the resolved target (e.g., if target is slide 3, path "title" means slide 3's title)
+- Use only existing target ids/indices from the target map
+- Return ONLY the JSON object, no markdown fences or explanations"""
+
+
+def get_edit_repair_prompt(artifact_type: str, instruction: str, failed_patch_json: str, error_message: str, target_map: str) -> str:
+    """Build a retry prompt when the first patch attempt failed."""
+    return f"""You are a content editor. Your previous patch attempt failed validation.
+
+Original instruction: {instruction}
+
+Your previous output:
+{failed_patch_json}
+
+Error message: {error_message}
+
+Available targets:
+{target_map}
+
+Please fix the patch and return ONLY valid JSON matching the Patch schema:
+{{
+  "artifact_type": "{artifact_type}",
+  "target": {{"kind": "...", ...}},
+  "ops": [{{"op": "SET|INSERT_AFTER|DELETE", "path": "...", ...}}],
+  "summary": "..."
+}}
+
+Rules:
+- Fix the error identified above
+- Use only valid target kinds and existing ids from the target map
+- Return ONLY the JSON object, no markdown fences or explanations"""

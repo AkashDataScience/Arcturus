@@ -445,8 +445,17 @@ interface StudioSlice {
     pollExportJob: (artifactId: string, jobId: string) => void;
     stopExportPolling: () => void;
     clearAutoDownload: () => void;
+    // Delete & Clear
+    deleteArtifact: (id: string) => Promise<void>;
+    clearAllArtifacts: () => Promise<void>;
     // Phase 5: Sheet Upload Analysis
     analyzeSheetUpload: (artifactId: string, file: File) => Promise<void>;
+    // Phase 6: Edit Loop
+    editLoading: boolean;
+    editError: string | null;
+    editConflict: boolean;
+    applyEditInstruction: (artifactId: string, instruction: string, baseRevisionId?: string) => Promise<void>;
+    clearEditState: () => void;
 }
 
 interface AppState extends RunSlice, GraphSlice, WorkspaceSlice, ReplaySlice, SettingsSlice, RagViewerSlice, NotesSlice, IdeSlice, RemmeSlice, ExplorerSlice, AppsSlice, AgentTestSlice, NewsSlice, ChatSlice, ReviewSlice, InboxSlice, SchedulerSlice, EventBusSlice, StudioSlice { }
@@ -2344,6 +2353,46 @@ export const useAppStore = create<AppState>()(
                 set({ activeArtifact: result });
                 get().fetchArtifacts?.();
             },
+
+            // Delete & Clear
+            deleteArtifact: async (id: string) => {
+                await api.deleteArtifact(id);
+                const wasActive = get().activeArtifactId === id;
+                set({
+                    studioArtifacts: get().studioArtifacts.filter((a: any) => a.id !== id),
+                    ...(wasActive ? { activeArtifactId: null, activeArtifact: null } : {}),
+                });
+            },
+            clearAllArtifacts: async () => {
+                await api.clearAllArtifacts();
+                set({ studioArtifacts: [], activeArtifactId: null, activeArtifact: null });
+            },
+
+            // Phase 6: Edit Loop
+            editLoading: false,
+            editError: null,
+            editConflict: false,
+            applyEditInstruction: async (artifactId: string, instruction: string, baseRevisionId?: string) => {
+                set({ editLoading: true, editError: null, editConflict: false });
+                try {
+                    const result = await api.editArtifact(artifactId, {
+                        instruction,
+                        base_revision_id: baseRevisionId,
+                    });
+                    set({ activeArtifact: result, editLoading: false });
+                    get().fetchArtifacts?.();
+                } catch (e: any) {
+                    const status = e?.response?.status;
+                    if (status === 409) {
+                        set({ editConflict: true, editLoading: false });
+                    } else {
+                        const detail = e?.response?.data?.detail;
+                        const msg = typeof detail === 'string' ? detail : (e?.message || 'Edit failed');
+                        set({ editError: msg, editLoading: false });
+                    }
+                }
+            },
+            clearEditState: () => set({ editError: null, editConflict: false }),
         }),
         {
             name: 'agent-platform-storage',

@@ -716,3 +716,245 @@ def test_30_sheet_export_job_lifecycle_completed(tmp_path) -> None:
     assert result["output_uri"] is not None
     assert result["validator_results"]["valid"] is True
     assert result["validator_results"]["sheet_count"] >= 2
+
+
+# === Phase 6: Edit Loop Acceptance Tests ===
+
+
+def _make_slides_artifact(tmp_path):
+    """Create a slides artifact with content tree for edit testing."""
+    import asyncio
+    from datetime import datetime, timezone
+    from uuid import uuid4
+    from core.schemas.studio_schema import Artifact, ArtifactType
+    from core.studio.orchestrator import ForgeOrchestrator
+    from core.studio.storage import StudioStorage
+    from core.studio.revision import RevisionManager
+
+    storage = StudioStorage(base_dir=tmp_path / "studio")
+    orch = ForgeOrchestrator(storage)
+    rm = RevisionManager(storage)
+
+    art_id = str(uuid4())
+    ct = _sample_content_tree_dict()
+    artifact = Artifact(
+        id=art_id,
+        type=ArtifactType.slides,
+        title="Edit Test",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        content_tree=ct,
+    )
+    rev = rm.create_revision(art_id, ct, "Initial draft")
+    artifact.revision_head_id = rev.id
+    storage.save_artifact(artifact)
+    return orch, storage, art_id
+
+
+def _make_doc_artifact(tmp_path):
+    """Create a document artifact with content tree for edit testing."""
+    from datetime import datetime, timezone
+    from uuid import uuid4
+    from core.schemas.studio_schema import Artifact, ArtifactType
+    from core.studio.orchestrator import ForgeOrchestrator
+    from core.studio.storage import StudioStorage
+    from core.studio.revision import RevisionManager
+
+    storage = StudioStorage(base_dir=tmp_path / "studio")
+    orch = ForgeOrchestrator(storage)
+    rm = RevisionManager(storage)
+
+    art_id = str(uuid4())
+    ct = {
+        "doc_title": "Test Report",
+        "doc_type": "report",
+        "abstract": "Summary.",
+        "sections": [
+            {"id": "sec1", "heading": "Introduction", "level": 1, "content": "Intro.", "subsections": [], "citations": []},
+            {"id": "sec2", "heading": "Conclusion", "level": 1, "content": "End.", "subsections": [], "citations": []},
+        ],
+        "bibliography": [],
+    }
+    artifact = Artifact(
+        id=art_id, type=ArtifactType.document, title="Edit Doc Test",
+        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        content_tree=ct,
+    )
+    rev = rm.create_revision(art_id, ct, "Initial draft")
+    artifact.revision_head_id = rev.id
+    storage.save_artifact(artifact)
+    return orch, storage, art_id
+
+
+def _make_sheet_artifact(tmp_path):
+    """Create a sheet artifact with content tree for edit testing."""
+    from datetime import datetime, timezone
+    from uuid import uuid4
+    from core.schemas.studio_schema import Artifact, ArtifactType
+    from core.studio.orchestrator import ForgeOrchestrator
+    from core.studio.storage import StudioStorage
+    from core.studio.revision import RevisionManager
+
+    storage = StudioStorage(base_dir=tmp_path / "studio")
+    orch = ForgeOrchestrator(storage)
+    rm = RevisionManager(storage)
+
+    art_id = str(uuid4())
+    ct = {
+        "workbook_title": "Financial Model",
+        "tabs": [
+            {"id": "tab1", "name": "Revenue", "headers": ["Month", "MRR"],
+             "rows": [["Jan", 5000], ["Feb", 5500]], "formulas": {}, "column_widths": [120, 100]},
+        ],
+    }
+    artifact = Artifact(
+        id=art_id, type=ArtifactType.sheet, title="Edit Sheet Test",
+        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        content_tree=ct,
+    )
+    rev = rm.create_revision(art_id, ct, "Initial draft")
+    artifact.revision_head_id = rev.id
+    storage.save_artifact(artifact)
+    return orch, storage, art_id
+
+
+def test_31_slides_edit_creates_valid_revision(tmp_path) -> None:
+    """Editing a slides artifact creates a new revision."""
+    import asyncio
+    orch, storage, art_id = _make_slides_artifact(tmp_path)
+
+    patch = {
+        "artifact_type": "slides",
+        "target": {"kind": "slide_index", "index": 2},
+        "ops": [{"op": "SET", "path": "title", "value": "Edited Problem Statement"}],
+        "summary": "Update slide 2 title",
+    }
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(
+            orch.edit_artifact(art_id, "Update slide 2 title", _patch_override=patch)
+        )
+    finally:
+        loop.close()
+
+    assert result["edit_result"]["status"] == "applied"
+    revisions = storage.list_revisions(art_id)
+    assert len(revisions) == 2  # initial + edit
+
+
+def test_32_slides_edit_then_export_valid_pptx(tmp_path) -> None:
+    """Edit then export produces a valid PPTX."""
+    import asyncio
+    from core.schemas.studio_schema import ExportFormat
+    orch, storage, art_id = _make_slides_artifact(tmp_path)
+
+    patch = {
+        "artifact_type": "slides",
+        "target": {"kind": "slide_index", "index": 3},
+        "ops": [{"op": "SET", "path": "title", "value": "Revised Solution"}],
+        "summary": "Update slide 3 title",
+    }
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(orch.edit_artifact(art_id, "Edit", _patch_override=patch))
+        export_result = loop.run_until_complete(orch.export_artifact(art_id, ExportFormat.pptx))
+    finally:
+        loop.close()
+
+    assert export_result["status"] == "completed"
+
+
+def test_33_document_edit_creates_valid_revision(tmp_path) -> None:
+    """Editing a document artifact creates a new revision."""
+    import asyncio
+    orch, storage, art_id = _make_doc_artifact(tmp_path)
+
+    patch = {
+        "artifact_type": "document",
+        "target": {"kind": "section_id", "id": "sec1"},
+        "ops": [{"op": "SET", "path": "content", "value": "Updated introduction content."}],
+        "summary": "Update intro section",
+    }
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(
+            orch.edit_artifact(art_id, "Update intro", _patch_override=patch)
+        )
+    finally:
+        loop.close()
+
+    assert result["edit_result"]["status"] == "applied"
+
+
+def test_34_sheet_edit_creates_valid_revision(tmp_path) -> None:
+    """Editing a sheet artifact creates a new revision."""
+    import asyncio
+    orch, storage, art_id = _make_sheet_artifact(tmp_path)
+
+    patch = {
+        "artifact_type": "sheet",
+        "target": {"kind": "tab_name", "name": "Revenue"},
+        "ops": [{"op": "SET", "path": "rows[0][1]", "value": 9999}],
+        "summary": "Update revenue value",
+    }
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(
+            orch.edit_artifact(art_id, "Update revenue", _patch_override=patch)
+        )
+    finally:
+        loop.close()
+
+    assert result["edit_result"]["status"] == "applied"
+
+
+def test_35_edit_then_export_all_types(tmp_path) -> None:
+    """Edit + export works for slides, documents, and sheets."""
+    import asyncio
+    from core.schemas.studio_schema import ExportFormat
+
+    # Slides
+    s_orch, _, s_id = _make_slides_artifact(tmp_path)
+    # Document
+    d_orch, _, d_id = _make_doc_artifact(tmp_path)
+    # Sheet
+    sh_orch, _, sh_id = _make_sheet_artifact(tmp_path)
+
+    loop = asyncio.new_event_loop()
+    try:
+        # Edit all
+        loop.run_until_complete(s_orch.edit_artifact(
+            s_id, "edit", _patch_override={
+                "artifact_type": "slides",
+                "target": {"kind": "slide_index", "index": 1},
+                "ops": [{"op": "SET", "path": "title", "value": "New Title"}],
+                "summary": "edit",
+            }
+        ))
+        loop.run_until_complete(d_orch.edit_artifact(
+            d_id, "edit", _patch_override={
+                "artifact_type": "document",
+                "target": {"kind": "section_id", "id": "sec1"},
+                "ops": [{"op": "SET", "path": "content", "value": "New content."}],
+                "summary": "edit",
+            }
+        ))
+        loop.run_until_complete(sh_orch.edit_artifact(
+            sh_id, "edit", _patch_override={
+                "artifact_type": "sheet",
+                "target": {"kind": "tab_name", "name": "Revenue"},
+                "ops": [{"op": "SET", "path": "headers", "value": ["Month", "MRR", "Growth"]}],
+                "summary": "edit",
+            }
+        ))
+
+        # Export all
+        s_job = loop.run_until_complete(s_orch.export_artifact(s_id, ExportFormat.pptx))
+        d_job = loop.run_until_complete(d_orch.export_artifact(d_id, ExportFormat.docx))
+        sh_job = loop.run_until_complete(sh_orch.export_artifact(sh_id, ExportFormat.xlsx))
+    finally:
+        loop.close()
+
+    assert s_job["status"] == "completed"
+    assert d_job["status"] == "completed"
+    assert sh_job["status"] == "completed"
