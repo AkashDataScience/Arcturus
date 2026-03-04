@@ -17,7 +17,7 @@ from mcp_servers.tools.web_tools_async import smart_web_extract
 
 
 EXTRACT_TIMEOUT = 8   # seconds per URL — matches server_browser.py:98
-MAX_CONTENT_CHARS = 8000  # matches server_browser.py:105
+MAX_CONTENT_CHARS = 15000  # expanded for deep research exhaustiveness
 
 
 @dataclass
@@ -75,8 +75,9 @@ class CrawlPipeline:
     async def search_and_extract(
         self,
         sub_queries: list[str],
-        top_k: int = 10,
+        top_k: int = 15,
         max_sources: int = 60,
+        freshness: str = "",
     ) -> list[SourceDocument]:
         """Search for each sub-query and extract content from result URLs.
 
@@ -93,7 +94,7 @@ class CrawlPipeline:
         global_rank = 0
 
         for query in sub_queries:
-            urls = await smart_search(query, limit=top_k)
+            urls = await smart_search(query, limit=top_k, freshness=freshness)
             if not urls:
                 continue
 

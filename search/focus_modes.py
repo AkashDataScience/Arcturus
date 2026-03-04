@@ -14,6 +14,7 @@ class FocusConfig:
     retriever_instruction: str
     citation_format: str = "standard"
     decomposition_hint: str = ""
+    freshness: str = ""  # Brave freshness value (pd/pw/pm/py), empty = no filter
 
 
 FOCUS_CONFIGS: dict[str, FocusConfig] = {
@@ -43,6 +44,7 @@ FOCUS_CONFIGS: dict[str, FocusConfig] = {
         retriever_instruction="Prioritize recent news from the last 7 days. Include publication dates. Prefer established news outlets.",
         citation_format="standard",
         decomposition_hint="Focus on recent events, breaking developments, policy changes, and current affairs angles.",
+        freshness="pw",  # past week
     ),
     "code": FocusConfig(
         name="code",
@@ -61,6 +63,7 @@ FOCUS_CONFIGS: dict[str, FocusConfig] = {
         retriever_instruction="Prioritize SEC filings, financial reports, earnings calls, and market data sources. Extract numerical data, percentages, and financial metrics.",
         citation_format="standard",
         decomposition_hint="Focus on financial aspects — market data, companies, valuations, economic impact, investment angles, and regulatory landscape.",
+        freshness="pm",  # past month
     ),
     "writing": FocusConfig(
         name="writing",

@@ -5,13 +5,17 @@ Provides deep research pipeline: query decomposition -> parallel web crawl -> sy
 from search.focus_modes import FocusConfig, get_focus_config, list_focus_modes, apply_focus
 from search.crawl_pipeline import CrawlPipeline, SourceDocument
 from search.query_decomposer import decompose
-from search.synthesizer import synthesize, identify_gaps, SynthesisResult, Citation
+from search.synthesizer import (
+    synthesize, identify_gaps, resolve_contradictions, final_synthesize,
+    SynthesisResult, Citation, _deduplicate_sources,
+)
 from search.deep_research import DeepResearchOrchestrator, DeepResearchEvent
 
 __all__ = [
     "FocusConfig", "get_focus_config", "list_focus_modes", "apply_focus",
     "CrawlPipeline", "SourceDocument",
     "decompose",
-    "synthesize", "identify_gaps", "SynthesisResult", "Citation",
+    "synthesize", "identify_gaps", "resolve_contradictions", "final_synthesize",
+    "SynthesisResult", "Citation", "_deduplicate_sources",
     "DeepResearchOrchestrator", "DeepResearchEvent",
 ]

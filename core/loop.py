@@ -87,6 +87,7 @@ class AgentLoop4:
         self._query_approval_event = None  # asyncio.Event for query approval gate
         self._pending_queries = None
         self._approved_queries = None
+        self._queries_rejected = False
         
         # Load profile for strategy settings
         from core.profile_loader import get_profile
@@ -157,7 +158,13 @@ class AgentLoop4:
                 session_id=self.context.plan_graph.graph.get("session_id", ""),
                 resumed=True,
             ):
-                return await self._execute_dag(self.context)
+                # Deep research uses a multi-phase coordinator that dynamically creates
+                # nodes between phases. Route back through it so it can resume from the
+                # last completed phase (including re-showing the query approval gate).
+                if self.context.plan_graph.graph.get('research_mode') == 'deep_research':
+                    return await self._expand_deep_research_dag(self.context)
+                else:
+                    return await self._execute_dag(self.context)
             
         except Exception as e:
             log_error(f"Failed to resume session: {e}")
@@ -268,6 +275,59 @@ class AgentLoop4:
                             exclude_skills=planner_exclude
                         )
 
+                    def _normalize_plan_output(plan_result):
+                        """Normalize and recover plan_graph from various model output formats.
+
+                        Returns True if plan_graph is present after normalization.
+                        """
+                        output = plan_result.get('output', {})
+                        if not isinstance(output, dict):
+                            return False
+
+                        # Case 1: plan_graph already present
+                        if 'plan_graph' in output:
+                            return True
+
+                        # Case 2: nodes/edges at top level (model omitted plan_graph wrapper)
+                        if 'nodes' in output and 'edges' in output:
+                            log_step("Normalizing plan output: wrapping top-level nodes/edges into plan_graph", symbol="🔧")
+                            plan_result['output']['plan_graph'] = {
+                                'nodes': plan_result['output'].pop('nodes'),
+                                'edges': plan_result['output'].pop('edges')
+                            }
+                            return True
+
+                        # Case 3: JSON parse failed, raw text in final_answer — try re-extraction
+                        if 'final_answer' in output:
+                            log_step("Attempting plan_graph recovery from raw response", symbol="🔧")
+                            try:
+                                from core.json_parser import parse_llm_json
+                                recovered = parse_llm_json(output['final_answer'])
+                                if isinstance(recovered, dict):
+                                    if 'plan_graph' in recovered:
+                                        plan_result['output'] = recovered
+                                        return True
+                                    if 'nodes' in recovered and 'edges' in recovered:
+                                        plan_result['output'] = recovered
+                                        plan_result['output']['plan_graph'] = {
+                                            'nodes': plan_result['output'].pop('nodes'),
+                                            'edges': plan_result['output'].pop('edges')
+                                        }
+                                        return True
+                            except Exception:
+                                pass
+
+                        return False
+
+                    async def run_planner_validated():
+                        """Run planner and validate output has plan_graph, raising on failure."""
+                        result = await run_planner()
+                        if not result.get("success"):
+                            raise RuntimeError(f"Planning failed: {result.get('error', 'unknown')}")
+                        if not _normalize_plan_output(result):
+                            raise RuntimeError("PlannerAgent output missing 'plan_graph' key.")
+                        return result
+
                     # WATCHTOWER: Planner phase span
                     with agent_plan_span() as plan_span:
                         def on_plan_retry(attempt):
@@ -275,28 +335,19 @@ class AgentLoop4:
                             plan_span.set_attribute("is_retry", True)
 
                         plan_result = await self._track_task(
-                            retry_with_backoff(run_planner, on_retry=on_plan_retry)
+                            retry_with_backoff(
+                                run_planner_validated,
+                                on_retry=on_plan_retry,
+                                retryable_errors=(
+                                    asyncio.TimeoutError, ConnectionError,
+                                    TimeoutError, RuntimeError,
+                                ),
+                            )
                         )
                         attach_plan_graph_to_span(plan_span, plan_result)
 
                     if self.context.stop_requested:
                         break
-
-                    if not plan_result["success"]:
-                        self.context.mark_failed("Query", plan_result['error'])
-                        raise RuntimeError(f"Planning failed: {plan_result['error']}")
-
-                    # Normalize: if model returned {nodes, edges} at top level instead of {plan_graph: {nodes, edges}}
-                    if 'plan_graph' not in plan_result['output'] and 'nodes' in plan_result['output'] and 'edges' in plan_result['output']:
-                        log_step("Normalizing plan output: wrapping top-level nodes/edges into plan_graph", symbol="🔧")
-                        plan_result['output']['plan_graph'] = {
-                            'nodes': plan_result['output'].pop('nodes'),
-                            'edges': plan_result['output'].pop('edges')
-                        }
-
-                    if 'plan_graph' not in plan_result['output']:
-                        self.context.mark_failed("Query", "Output missing plan_graph")
-                        raise RuntimeError(f"PlannerAgent output missing 'plan_graph' key.")
 
                     # ===== AUTO-CLARIFICATION CHECK =====
                     AUTO_CLARYFY_THRESHOLD = 0.7
@@ -440,365 +491,587 @@ class AgentLoop4:
         5. Executes new nodes
 
         Phases:
-          1: T001 ThinkerAgent (query decomposition) — already in graph
+          1: T001 ThinkerAgent (query decomposition) + Query Approval Gate
           2: N × RetrieverAgent (parallel search, one per sub-query)
           3: ThinkerAgent (gap analysis)
-          4: SummarizerAgent (synthesis with citations)
-          5: FormatterAgent (final report)
+          4: Follow-up + contradiction searches
+          5: SummarizerAgent (synthesis with citations)
+          6: FormatterAgent (final report)
+
+        Resume support: Tracks completed phases in _dr_meta so that on
+        resume, already-completed phases are skipped and execution
+        continues from where it stopped.
         """
         focus_mode = context.plan_graph.graph.get('focus_mode')
         original_query = context.plan_graph.graph.get('original_query', '')
 
-        # ── Strip planner's nodes beyond T001 ──
-        # The PlannerAgent creates a full plan (T001-T00N), but deep research mode
-        # replaces T002+ with engine-controlled nodes. If we don't remove them,
-        # _execute_dag will run the planner's T002-T00N with wrong prompts
-        # before the engine gets a chance to create its own.
-        keep_nodes = {"ROOT", "Query", "T001"}
-        remove_ids = [n for n in context.plan_graph.nodes if n not in keep_nodes]
-        for node_id in remove_ids:
-            context.plan_graph.remove_node(node_id)
-        if remove_ids:
-            log_step(f"Stripped {len(remove_ids)} planner nodes — engine will rebuild phases 2-6", symbol="🔧")
+        # ── Resume support: load or initialize phase metadata ──
+        dr_meta = context.plan_graph.graph.get('_dr_meta')
+        is_resume = dr_meta is not None
 
-        # ── Override T001 prompt with improved research decomposition ──
-        if "T001" in context.plan_graph.nodes:
-            focus_instruction = ""
-            if focus_mode:
-                focus_labels = {
-                    "academic": "Focus on academic and scholarly angles — peer-reviewed research, theoretical frameworks, key researchers, institutions, and landmark papers.",
-                    "news": "Focus on recent events, breaking developments, policy changes, and current affairs angles.",
-                    "code": "Focus on technical implementation, APIs, libraries, frameworks, code architecture, and developer ecosystem.",
-                    "finance": "Focus on financial aspects — market data, companies, valuations, economic impact, investment angles, and regulatory landscape.",
-                    "writing": "Focus on narrative craft, communication styles, audience analysis, and editorial perspectives.",
-                }
-                focus_instruction = (
-                    f"\nFOCUS MODE: {focus_mode.upper()}\n"
-                    f"{focus_labels.get(focus_mode, 'Apply general research best practices.')}\n"
-                    f"Weight your queries toward this focus while still maintaining breadth.\n"
+        if not is_resume:
+            dr_meta = {'completed_phase': 0}
+            context.plan_graph.graph['_dr_meta'] = dr_meta
+
+            # ── Strip planner's nodes beyond T001 (first run only) ──
+            # The PlannerAgent creates a full plan (T001-T00N), but deep research mode
+            # replaces T002+ with engine-controlled nodes. If we don't remove them,
+            # _execute_dag will run the planner's T002-T00N with wrong prompts
+            # before the engine gets a chance to create its own.
+            keep_nodes = {"ROOT", "Query", "T001"}
+            remove_ids = [n for n in context.plan_graph.nodes if n not in keep_nodes]
+            for node_id in remove_ids:
+                context.plan_graph.remove_node(node_id)
+            if remove_ids:
+                log_step(f"Stripped {len(remove_ids)} planner nodes — engine will rebuild phases 2-6", symbol="🔧")
+
+            # ── Override T001 prompt with improved research decomposition (first run only) ──
+            if "T001" in context.plan_graph.nodes:
+                focus_instruction = ""
+                if focus_mode:
+                    focus_labels = {
+                        "academic": "Focus on academic and scholarly angles — peer-reviewed research, theoretical frameworks, key researchers, institutions, and landmark papers.",
+                        "news": "Focus on recent events, breaking developments, policy changes, and current affairs angles.",
+                        "code": "Focus on technical implementation, APIs, libraries, frameworks, code architecture, and developer ecosystem.",
+                        "finance": "Focus on financial aspects — market data, companies, valuations, economic impact, investment angles, and regulatory landscape.",
+                        "writing": "Focus on narrative craft, communication styles, audience analysis, and editorial perspectives.",
+                    }
+                    focus_instruction = (
+                        f"\nFOCUS MODE: {focus_mode.upper()}\n"
+                        f"{focus_labels.get(focus_mode, 'Apply general research best practices.')}\n"
+                        f"Weight your queries toward this focus while still maintaining breadth.\n"
+                    )
+
+                context.plan_graph.nodes["T001"]["agent_prompt"] = (
+                    f"You are a research strategist. Decompose the following query into 5-8 comprehensive "
+                    f"sub-queries that independent search agents will execute in parallel.\n\n"
+                    f"QUERY: '{original_query}'\n"
+                    f"{focus_instruction}\n"
+                    f"STRATEGY:\n"
+                    f"- Consider every plausible interpretation and domain the query could refer to\n"
+                    f"- For each domain, cover: definitions & fundamentals, technical depth, types & classifications, "
+                    f"key players & real-world applications, recent trends\n"
+                    f"- If the query implies geographic, temporal, or industry context, add queries scoped to that context\n"
+                    f"- Include one synthesis query that compares/contrasts across identified domains\n"
+                    f"- Each sub-query must be a complete, self-contained search string\n\n"
+                    f"OUTPUT: JSON with key 'decomposed_queries' — a list of "
+                    f"{{\"query\": \"<full search string>\", \"dimension\": \"<short label>\"}}"
                 )
+        else:
+            log_step(f"Resuming deep research from phase {dr_meta['completed_phase']}", symbol="▶️")
 
-            context.plan_graph.nodes["T001"]["agent_prompt"] = (
-                f"You are a research strategist. Decompose the following query into 5-8 comprehensive "
-                f"sub-queries that independent search agents will execute in parallel.\n\n"
-                f"QUERY: '{original_query}'\n"
-                f"{focus_instruction}\n"
-                f"STRATEGY:\n"
-                f"- Consider every plausible interpretation and domain the query could refer to\n"
-                f"- For each domain, cover: definitions & fundamentals, technical depth, types & classifications, "
-                f"key players & real-world applications, recent trends\n"
-                f"- If the query implies geographic, temporal, or industry context, add queries scoped to that context\n"
-                f"- Include one synthesis query that compares/contrasts across identified domains\n"
-                f"- Each sub-query must be a complete, self-contained search string\n\n"
-                f"OUTPUT: JSON with key 'decomposed_queries' — a list of "
-                f"{{\"query\": \"<full search string>\", \"dimension\": \"<short label>\"}}"
-            )
+        # ══════════════════════════════════════════════════════════════
+        # Phase 1: Execute T001 (Query Decomposition) + Approval Gate
+        # ══════════════════════════════════════════════════════════════
+        if dr_meta['completed_phase'] < 1:
+            log_step("Deep Research Phase 1: Query decomposition", symbol="🔬")
+            await self._track_task(self._execute_dag(context))
 
-        # ── Phase 1: Execute T001 (ThinkerAgent — Query Decomposition) ──
-        log_step("Deep Research Phase 1: Query decomposition", symbol="🔬")
-        await self._track_task(self._execute_dag(context))
+            if context.stop_requested:
+                return
 
-        if context.stop_requested:
-            return
+            # Check T001 completed
+            t001_data = context.plan_graph.nodes.get("T001", {})
+            if t001_data.get("status") != "completed":
+                log_error(f"T001 did not complete (status: {t001_data.get('status')}). Cannot expand.")
+                return
 
-        # Check T001 completed
-        t001_data = context.plan_graph.nodes.get("T001", {})
-        if t001_data.get("status") != "completed":
-            log_error(f"T001 did not complete (status: {t001_data.get('status')}). Cannot expand.")
-            return
+            # Extract sub-queries
+            gs = context.plan_graph.graph['globals_schema']
+            decomposed_raw = gs.get("decomposed_queries_T001")
+            sub_queries = self._extract_sub_queries(decomposed_raw)
 
-        # Extract sub-queries
-        gs = context.plan_graph.graph['globals_schema']
-        decomposed_raw = gs.get("decomposed_queries_T001")
-        sub_queries = self._extract_sub_queries(decomposed_raw)
+            if not sub_queries:
+                log_step("No sub-queries extracted, falling back to original query", symbol="⚠️")
+                sub_queries = [{"query": original_query, "dimension": "general"}]
 
-        if not sub_queries:
-            log_step("No sub-queries extracted, falling back to original query", symbol="⚠️")
-            sub_queries = [{"query": original_query, "dimension": "general"}]
-
-        sub_queries = sub_queries[:8]  # Cap at 8
-        num_queries = len(sub_queries)
-        log_step(f"Decomposed into {num_queries} sub-queries", symbol="📋")
-
-        # ── Query Approval Gate ──
-        # Pause and wait for user to approve decomposed queries before spawning retrievers
-        self._query_approval_event = asyncio.Event()
-        self._pending_queries = sub_queries
-        self._approved_queries = None
-
-        await event_bus.publish("query_approval_required", "AgentLoop4", {
-            "run_id": context.plan_graph.graph.get("session_id", ""),
-            "queries": sub_queries,
-            "original_query": original_query,
-        })
-        log_step("Waiting for user to approve research queries...", symbol="⏳")
-
-        await self._query_approval_event.wait()
-
-        # Use approved queries (may have been modified by user) or fallback to original
-        if self._approved_queries is not None:
-            sub_queries = self._approved_queries
+            sub_queries = sub_queries[:8]  # Cap at 8
             num_queries = len(sub_queries)
-            log_step(f"User approved {num_queries} queries", symbol="✅")
+            log_step(f"Decomposed into {num_queries} sub-queries", symbol="📋")
 
-        self._query_approval_event = None
-        self._pending_queries = None
-        self._approved_queries = None
+            # ── Query Approval Gate ──
+            # Pause and wait for user to approve decomposed queries before spawning retrievers
+            self._query_approval_event = asyncio.Event()
+            self._pending_queries = sub_queries
+            self._approved_queries = None
 
-        # ── Phase 2: Create N RetrieverAgent Nodes (Parallel) ──
-        retriever_nodes = []
-        retriever_edges = []
-        retriever_ids = []
-        retriever_write_keys = []
-
-        for i, sq in enumerate(sub_queries):
-            node_id = f"T{str(i + 2).zfill(3)}"  # T002, T003, ...
-            q_text = sq.get("query", original_query) if isinstance(sq, dict) else str(sq)
-            dimension = sq.get("dimension", f"dim_{i+1}") if isinstance(sq, dict) else f"dim_{i+1}"
-            write_key = f"initial_sources_{node_id}"
-
-            retriever_nodes.append({
-                "id": node_id,
-                "description": f"Search: {dimension}"[:120],
-                "agent": "RetrieverAgent",
-                "agent_prompt": self._build_retriever_prompt(q_text, focus_mode),
-                "reads": ["decomposed_queries_T001"],
-                "writes": [write_key],
-                "status": "pending"
+            await event_bus.publish("query_approval_required", "AgentLoop4", {
+                "run_id": context.plan_graph.graph.get("session_id", ""),
+                "queries": sub_queries,
+                "original_query": original_query,
             })
-            retriever_edges.append({"source": "T001", "target": node_id})
-            retriever_ids.append(node_id)
-            retriever_write_keys.append(write_key)
+            log_step("Waiting for user to approve research queries...", symbol="⏳")
 
-        self._merge_plan_into_context({"nodes": retriever_nodes, "edges": retriever_edges})
-        await event_bus.publish("dag_expanded", "AgentLoop4", {
-            "phase": 2, "new_nodes": retriever_ids,
-            "message": f"Searching {num_queries} dimensions with 15 URLs each"
-        })
+            await self._query_approval_event.wait()
 
-        log_step(f"Deep Research Phase 2: {num_queries} parallel searches", symbol="🔍")
-        await self._execute_steps_parallel(context, retriever_ids)
+            # Check if user rejected the queries
+            if self._queries_rejected:
+                log_step("User rejected research queries — aborting", symbol="🛑")
+                self._query_approval_event = None
+                self._pending_queries = None
+                self._approved_queries = None
+                self._queries_rejected = False
+                self.stop()
+                return context
 
-        if context.stop_requested:
-            return
+            # Use approved queries (may have been modified by user) or fallback to original
+            if self._approved_queries is not None:
+                sub_queries = self._approved_queries
+                num_queries = len(sub_queries)
+                log_step(f"User approved {num_queries} queries", symbol="✅")
 
-        # Filter to only successfully completed retrievers
-        successful_ids = [rid for rid in retriever_ids
-                          if context.plan_graph.nodes.get(rid, {}).get("status") == "completed"]
-        successful_write_keys = [f"initial_sources_{rid}" for rid in successful_ids]
+            self._query_approval_event = None
+            self._pending_queries = None
+            self._approved_queries = None
+            self._queries_rejected = False
+
+            # Save Phase 1 completion
+            dr_meta.update({
+                'completed_phase': 1,
+                'sub_queries': sub_queries,
+                'num_queries': num_queries,
+            })
+            context._save_session()
+
+        # Restore Phase 1 results
+        sub_queries = dr_meta['sub_queries']
+        num_queries = dr_meta['num_queries']
+
+        # ══════════════════════════════════════════════════════════════
+        # Phase 2: Create N RetrieverAgent Nodes (Parallel)
+        # ══════════════════════════════════════════════════════════════
+        if dr_meta['completed_phase'] < 2:
+            retriever_nodes = []
+            retriever_edges = []
+            retriever_ids = []
+            retriever_write_keys = []
+
+            for i, sq in enumerate(sub_queries):
+                node_id = f"T{str(i + 2).zfill(3)}"  # T002, T003, ...
+                q_text = sq.get("query", original_query) if isinstance(sq, dict) else str(sq)
+                dimension = sq.get("dimension", f"dim_{i+1}") if isinstance(sq, dict) else f"dim_{i+1}"
+                write_key = f"initial_sources_{node_id}"
+
+                retriever_nodes.append({
+                    "id": node_id,
+                    "description": f"Search: {dimension}"[:120],
+                    "agent": "RetrieverAgent",
+                    "agent_prompt": self._build_retriever_prompt(q_text, focus_mode),
+                    "reads": ["decomposed_queries_T001"],
+                    "writes": [write_key],
+                    "status": "pending"
+                })
+                retriever_edges.append({"source": "T001", "target": node_id})
+                retriever_ids.append(node_id)
+                retriever_write_keys.append(write_key)
+
+            # _merge_plan_into_context skips already-completed nodes
+            self._merge_plan_into_context({"nodes": retriever_nodes, "edges": retriever_edges})
+            await event_bus.publish("dag_expanded", "AgentLoop4", {
+                "phase": 2, "new_nodes": retriever_ids,
+                "message": f"Searching {num_queries} dimensions with 15 URLs each"
+            })
+
+            log_step(f"Deep Research Phase 2: {num_queries} parallel searches", symbol="🔍")
+            # Only execute retrievers that are still pending (skip already-completed on resume)
+            pending_retriever_ids = [rid for rid in retriever_ids
+                                     if context.plan_graph.nodes.get(rid, {}).get("status") == "pending"]
+            if pending_retriever_ids:
+                await self._execute_steps_parallel(context, pending_retriever_ids)
+
+            if context.stop_requested:
+                return
+
+            # Filter to only successfully completed retrievers
+            successful_ids = [rid for rid in retriever_ids
+                              if context.plan_graph.nodes.get(rid, {}).get("status") == "completed"]
+            successful_write_keys = [f"initial_sources_{rid}" for rid in successful_ids]
+
+            if not successful_ids:
+                log_error("All RetrieverAgents failed. Cannot continue deep research.")
+                return
+
+            # Save Phase 2 completion
+            dr_meta.update({
+                'completed_phase': 2,
+                'retriever_ids': retriever_ids,
+                'retriever_write_keys': retriever_write_keys,
+                'successful_ids': successful_ids,
+                'successful_write_keys': successful_write_keys,
+            })
+            context._save_session()
+
+        # Restore Phase 2 results
+        retriever_ids = dr_meta.get('retriever_ids', [])
+        retriever_write_keys = dr_meta.get('retriever_write_keys', [])
+        successful_ids = dr_meta.get('successful_ids', [])
+        successful_write_keys = dr_meta.get('successful_write_keys', [])
 
         if not successful_ids:
             log_error("All RetrieverAgents failed. Cannot continue deep research.")
             return
 
-        # ── Phase 3: Gap Analysis ThinkerAgent ──
-        gap_id = f"T{str(num_queries + 2).zfill(3)}"
-        gap_analysis_key = f"gap_analysis_{gap_id}"
+        # ══════════════════════════════════════════════════════════════
+        # Phase 3: Gap Analysis ThinkerAgent
+        # ══════════════════════════════════════════════════════════════
+        if dr_meta['completed_phase'] < 3:
+            gap_id = f"T{str(num_queries + 2).zfill(3)}"
+            gap_analysis_key = f"gap_analysis_{gap_id}"
+            followup_queries_key = f"followup_queries_{gap_id}"
+            contradictions_key = f"contradictions_{gap_id}"
+            contradiction_queries_key = f"contradiction_queries_{gap_id}"
 
-        gap_node = {
-            "id": gap_id,
-            "description": "Analyze gaps and contradictions across sources",
-            "agent": "ThinkerAgent",
-            "agent_prompt": (
-                f"Analyze all collected research sources for coverage gaps, contradictions, "
-                f"and weak evidence. Read: {', '.join(successful_write_keys)}. "
-                f"Original query: '{original_query}'. "
-                f"Output JSON with: 'gap_analysis' (string summary of gaps found), "
-                f"'followup_queries' (list of 1-3 targeted search queries to fill the most critical gaps), "
-                f"'contradictions' (list of conflicting claims between sources)."
-            ),
-            "reads": successful_write_keys,
-            "writes": [gap_analysis_key],
-            "status": "pending"
-        }
-        gap_edges = [{"source": rid, "target": gap_id} for rid in successful_ids]
+            gap_node = {
+                "id": gap_id,
+                "description": "Analyze gaps and contradictions across sources",
+                "agent": "ThinkerAgent",
+                "agent_prompt": (
+                    f"Analyze all collected research sources for coverage gaps, contradictions, "
+                    f"and weak evidence. Read: {', '.join(successful_write_keys)}. "
+                    f"Original query: '{original_query}'. "
+                    f"Output JSON with these EXACT keys: "
+                    f"'{gap_analysis_key}' (string summary of gaps found), "
+                    f"'{followup_queries_key}' (list of 1-3 targeted search queries to fill the most critical gaps), "
+                    f"'{contradictions_key}' (list of conflicting claims between sources — be specific about which sources disagree and on what), "
+                    f"'{contradiction_queries_key}' (list of 1-3 targeted search queries specifically designed to VERIFY and RESOLVE each detected contradiction — "
+                    f"each query should seek authoritative evidence to determine which claim is correct. "
+                    f"If no contradictions are found, return an empty list)."
+                ),
+                "reads": successful_write_keys,
+                "writes": [gap_analysis_key, followup_queries_key, contradictions_key, contradiction_queries_key],
+                "status": "pending"
+            }
+            gap_edges = [{"source": rid, "target": gap_id} for rid in successful_ids]
 
-        self._merge_plan_into_context({"nodes": [gap_node], "edges": gap_edges})
-        await event_bus.publish("dag_expanded", "AgentLoop4", {
-            "phase": 3, "new_nodes": [gap_id],
-            "message": "Analyzing gaps and contradictions"
-        })
-
-        log_step(f"Deep Research Phase 3: Gap analysis ({gap_id})", symbol="🔎")
-        await self._track_task(self._execute_dag(context))
-
-        if context.stop_requested:
-            return
-
-        # ── Phase 4: Targeted Deep Search (follow-up queries from gap analysis) ──
-        deep_write_keys = []
-        followup_ids = []
-        followup_queries = self._extract_followup_queries(context, gap_analysis_key)
-        node_offset = num_queries + 3  # next available node number
-
-        if followup_queries:
-            followup_nodes = []
-            followup_edges = []
-
-            for i, fq in enumerate(followup_queries):
-                fq_id = f"T{str(node_offset + i).zfill(3)}"
-                fq_write_key = f"deep_sources_{fq_id}"
-                followup_nodes.append({
-                    "id": fq_id,
-                    "description": f"Deep search: {fq[:80]}",
-                    "agent": "RetrieverAgent",
-                    "agent_prompt": self._build_retriever_prompt(fq, focus_mode),
-                    "reads": [gap_analysis_key],
-                    "writes": [fq_write_key],
-                    "status": "pending"
-                })
-                followup_edges.append({"source": gap_id, "target": fq_id})
-                followup_ids.append(fq_id)
-                deep_write_keys.append(fq_write_key)
-
-            self._merge_plan_into_context({"nodes": followup_nodes, "edges": followup_edges})
+            self._merge_plan_into_context({"nodes": [gap_node], "edges": gap_edges})
             await event_bus.publish("dag_expanded", "AgentLoop4", {
-                "phase": 4, "new_nodes": followup_ids,
-                "message": f"Deep searching {len(followup_queries)} follow-up queries"
+                "phase": 3, "new_nodes": [gap_id],
+                "message": "Analyzing gaps and contradictions"
             })
 
-            log_step(f"Deep Research Phase 4: {len(followup_queries)} targeted follow-up searches", symbol="🔬")
-            await self._execute_steps_parallel(context, followup_ids)
-            node_offset += len(followup_queries)
+            log_step(f"Deep Research Phase 3: Gap analysis ({gap_id})", symbol="🔎")
+            await self._track_task(self._execute_dag(context))
 
             if context.stop_requested:
                 return
 
-            # Filter to successfully completed follow-up retrievers
-            deep_write_keys = [f"deep_sources_{fid}" for fid in followup_ids
-                               if context.plan_graph.nodes.get(fid, {}).get("status") == "completed"]
-        else:
-            log_step("Deep Research Phase 4: No follow-up queries needed — skipping", symbol="⏩")
+            # Save Phase 3 completion
+            dr_meta.update({
+                'completed_phase': 3,
+                'gap_id': gap_id,
+                'gap_analysis_key': gap_analysis_key,
+                'followup_queries_key': followup_queries_key,
+                'contradictions_key': contradictions_key,
+                'contradiction_queries_key': contradiction_queries_key,
+                'node_offset': num_queries + 3,
+            })
+            context._save_session()
 
-        # ── Build source index and pre-process sources before synthesis ──
-        all_retriever_keys = successful_write_keys + deep_write_keys
-        self._build_source_index(context, all_retriever_keys)
-        self._preprocess_sources(context, all_retriever_keys, sub_queries)
+        # Restore Phase 3 results
+        gap_id = dr_meta.get('gap_id', '')
+        gap_analysis_key = dr_meta.get('gap_analysis_key', '')
+        followup_queries_key = dr_meta.get('followup_queries_key', '')
+        contradictions_key = dr_meta.get('contradictions_key', '')
+        contradiction_queries_key = dr_meta.get('contradiction_queries_key', '')
+        node_offset = dr_meta.get('node_offset', num_queries + 3)
 
-        # ── Phase 5: SummarizerAgent ──
-        synth_id = f"T{str(node_offset).zfill(3)}"
-        synth_key = f"research_synthesis_{synth_id}"
-        synth_reads = ["processed_sources", "source_index", gap_analysis_key]
+        # ══════════════════════════════════════════════════════════════
+        # Phase 4: Follow-up + Contradiction Searches
+        # ══════════════════════════════════════════════════════════════
+        if dr_meta['completed_phase'] < 4:
+            # ── Phase 4a: Targeted Deep Search (follow-up queries from gap analysis) ──
+            deep_write_keys = []
+            followup_ids = []
+            followup_queries = self._extract_followup_queries(context, followup_queries_key)
 
-        # Build focus-mode-specific synthesis instructions
-        focus_synth_extra = ""
-        if focus_mode == "code":
-            focus_synth_extra = (
-                "FOCUS MODE: CODE. You MUST preserve ALL code blocks from sources. "
-                "Wrap every code snippet in fenced markdown code blocks with the correct language tag "
-                "(```python, ```javascript, etc.). Include complete function signatures, class definitions, "
-                "and usage examples. Do NOT paraphrase or summarize code — include it verbatim. "
-                "Organize code examples by dimension/topic. For each code block, explain what it does "
-                "and cite its source using [[N]](url). "
-            )
+            if followup_queries:
+                followup_nodes = []
+                followup_edges = []
 
-        synth_node = {
-            "id": synth_id,
-            "description": "Synthesize all sources into cited narrative",
-            "agent": "SummarizerAgent",
-            "agent_prompt": (
-                f"Synthesize ALL research sources into a comprehensive, exhaustive narrative. "
-                f"Read 'processed_sources' (organized by research dimension with excerpts) "
-                f"and 'source_index' (mapping source numbers to REAL URLs and titles). "
-                f"Original query: '{original_query}'. "
-                f"{focus_synth_extra}"
-                f"Cover EVERY research dimension. Cite EVERY source using [[N]](url) format "
-                f"where url is the ACTUAL URL from source_index or processed_sources — "
-                f"NEVER use example.com or any placeholder/made-up URL. "
-                f"Each source in processed_sources has 'url' and 'index' fields — use those exact URLs. "
-                f"Include per-paragraph confidence scoring (HIGH/MEDIUM/LOW). "
-                f"Surface contradictions explicitly. Minimum 1500 words."
-            ),
-            "reads": synth_reads,
-            "writes": [synth_key],
-            "status": "pending"
-        }
+                for i, fq in enumerate(followup_queries):
+                    fq_id = f"T{str(node_offset + i).zfill(3)}"
+                    fq_write_key = f"deep_sources_{fq_id}"
+                    followup_nodes.append({
+                        "id": fq_id,
+                        "description": f"Deep search: {fq[:80]}",
+                        "agent": "RetrieverAgent",
+                        "agent_prompt": self._build_retriever_prompt(fq, focus_mode),
+                        "reads": [gap_analysis_key],
+                        "writes": [fq_write_key],
+                        "status": "pending"
+                    })
+                    followup_edges.append({"source": gap_id, "target": fq_id})
+                    followup_ids.append(fq_id)
+                    deep_write_keys.append(fq_write_key)
 
-        # Wire synthesis to gap analysis + all follow-up retrievers
-        synth_edges = [{"source": gap_id, "target": synth_id}]
-        for fid in followup_ids:
-            synth_edges.append({"source": fid, "target": synth_id})
+                self._merge_plan_into_context({"nodes": followup_nodes, "edges": followup_edges})
+                await event_bus.publish("dag_expanded", "AgentLoop4", {
+                    "phase": 4, "new_nodes": followup_ids,
+                    "message": f"Deep searching {len(followup_queries)} follow-up queries"
+                })
 
-        self._merge_plan_into_context({
-            "nodes": [synth_node],
-            "edges": synth_edges
-        })
-        await event_bus.publish("dag_expanded", "AgentLoop4", {
-            "phase": 5, "new_nodes": [synth_id],
-            "message": "Synthesizing sources with citations"
-        })
+                log_step(f"Deep Research Phase 4: {len(followup_queries)} targeted follow-up searches", symbol="🔬")
+                pending_followup_ids = [fid for fid in followup_ids
+                                        if context.plan_graph.nodes.get(fid, {}).get("status") == "pending"]
+                if pending_followup_ids:
+                    await self._execute_steps_parallel(context, pending_followup_ids)
+                node_offset += len(followup_queries)
 
-        log_step(f"Deep Research Phase 5: Synthesis ({synth_id})", symbol="📝")
-        await self._track_task(self._execute_dag(context))
+                if context.stop_requested:
+                    return
 
-        if context.stop_requested:
-            return
+                # Filter to successfully completed follow-up retrievers
+                deep_write_keys = [f"deep_sources_{fid}" for fid in followup_ids
+                                   if context.plan_graph.nodes.get(fid, {}).get("status") == "completed"]
+            else:
+                log_step("Deep Research Phase 4: No follow-up queries needed — skipping", symbol="⏩")
 
-        # ── Phase 6: FormatterAgent ──
-        fmt_id = f"T{str(node_offset + 1).zfill(3)}"
-        fmt_key = f"formatted_report_{fmt_id}"
+            # ── Phase 4.5: Contradiction Resolution Search ──
+            contradiction_write_keys = []
+            contradiction_ids = []
+            contradiction_queries = self._extract_contradiction_queries(context, contradiction_queries_key, contradictions_key)
 
-        # Build focus-mode-specific formatter instructions
-        focus_fmt_extra = ""
-        if focus_mode == "code":
-            focus_fmt_extra = (
-                "FOCUS MODE: CODE. The report MUST include ALL code blocks from the synthesis. "
-                "Preserve every fenced code block verbatim — do NOT remove, truncate, or summarize code. "
-                "Use proper syntax highlighting (```python, ```javascript, etc.). "
-                "Add a dedicated '## Code Examples' or '## Implementation' section grouping all code snippets. "
-                "For each code block include: source citation, language, and brief explanation. "
-            )
+            if contradiction_queries:
+                contradiction_nodes = []
+                contradiction_edges = []
 
-        fmt_node = {
-            "id": fmt_id,
-            "description": "Format final research report",
-            "agent": "FormatterAgent",
-            "agent_prompt": (
-                f"Generate the final research report from available data. "
-                f"Original query: '{original_query}'. "
-                f"Use all_globals_schema to find ALL available data even if some phases were incomplete. "
-                f"{focus_fmt_extra}"
-                f"Include: executive summary, key findings with confidence levels, "
-                f"detailed analysis, methodology, and clickable citation list. "
-                f"CRITICAL: Use source_index to get REAL URLs for citations — NEVER use example.com or placeholder URLs. "
-                f"Preserve all [[N]](url) citations from the synthesis exactly as-is. "
-                f"If some data is missing, note it but still produce the best report possible. "
-                f"Output the report under BOTH 'markdown_report' AND '{fmt_key}' keys in your JSON response."
-            ),
-            "reads": [synth_key, "source_index"],
-            "writes": [fmt_key],
-            "status": "pending"
-        }
+                for i, cq in enumerate(contradiction_queries):
+                    cq_id = f"T{str(node_offset + i).zfill(3)}"
+                    cq_write_key = f"contradiction_sources_{cq_id}"
+                    contradiction_nodes.append({
+                        "id": cq_id,
+                        "description": f"Verify: {cq[:80]}",
+                        "agent": "RetrieverAgent",
+                        "agent_prompt": self._build_retriever_prompt(cq, focus_mode),
+                        "reads": [gap_analysis_key],
+                        "writes": [cq_write_key],
+                        "status": "pending"
+                    })
+                    # Wire from gap analysis so all contradiction searches can run in parallel
+                    contradiction_edges.append({"source": gap_id, "target": cq_id})
+                    contradiction_ids.append(cq_id)
+                    contradiction_write_keys.append(cq_write_key)
 
-        self._merge_plan_into_context({
-            "nodes": [fmt_node],
-            "edges": [{"source": synth_id, "target": fmt_id}]
-        })
-        await event_bus.publish("dag_expanded", "AgentLoop4", {
-            "phase": 6, "new_nodes": [fmt_id],
-            "message": "Generating final report"
-        })
+                self._merge_plan_into_context({"nodes": contradiction_nodes, "edges": contradiction_edges})
+                await event_bus.publish("dag_expanded", "AgentLoop4", {
+                    "phase": "4.5", "new_nodes": contradiction_ids,
+                    "message": f"Verifying {len(contradiction_queries)} contradictions with retriever agents"
+                })
 
-        log_step(f"Deep Research Phase 6: Report formatting ({fmt_id})", symbol="📄")
-        await self._track_task(self._execute_dag(context))
+                log_step(f"Deep Research Phase 4.5: {len(contradiction_queries)} contradiction resolution searches", symbol="⚖️")
+                pending_contradiction_ids = [cid for cid in contradiction_ids
+                                             if context.plan_graph.nodes.get(cid, {}).get("status") == "pending"]
+                if pending_contradiction_ids:
+                    await self._execute_steps_parallel(context, pending_contradiction_ids)
+                node_offset += len(contradiction_queries)
 
-        # ── Fallback: Ensure FormatterAgent always produces output ──
-        fmt_status = context.plan_graph.nodes.get(fmt_id, {}).get("status")
-        if fmt_status != "completed":
-            log_step("FormatterAgent didn't complete — running fallback with available data", symbol="⚠️")
-            # Reset formatter to pending and clear dependency edges so it can run
-            if fmt_id in context.plan_graph.nodes:
-                context.plan_graph.nodes[fmt_id]["status"] = "pending"
-                context.plan_graph.nodes[fmt_id]["error"] = None
-            # Remove incoming edges so get_ready_steps() won't block on failed predecessors
-            predecessors = list(context.plan_graph.predecessors(fmt_id))
-            for pred in predecessors:
-                context.plan_graph.remove_edge(pred, fmt_id)
+                if context.stop_requested:
+                    return
+
+                # Filter to successfully completed contradiction retrievers
+                contradiction_write_keys = [f"contradiction_sources_{cid}" for cid in contradiction_ids
+                                            if context.plan_graph.nodes.get(cid, {}).get("status") == "completed"]
+            else:
+                log_step("Deep Research Phase 4.5: No contradictions to resolve — skipping", symbol="⏩")
+
+            # Save Phase 4 completion
+            dr_meta.update({
+                'completed_phase': 4,
+                'followup_ids': followup_ids,
+                'deep_write_keys': deep_write_keys,
+                'contradiction_ids': contradiction_ids,
+                'contradiction_write_keys': contradiction_write_keys,
+                'node_offset': node_offset,
+            })
+            context._save_session()
+
+        # Restore Phase 4 results
+        followup_ids = dr_meta.get('followup_ids', [])
+        deep_write_keys = dr_meta.get('deep_write_keys', [])
+        contradiction_ids = dr_meta.get('contradiction_ids', [])
+        contradiction_write_keys = dr_meta.get('contradiction_write_keys', [])
+        node_offset = dr_meta.get('node_offset', num_queries + 3)
+
+        # ══════════════════════════════════════════════════════════════
+        # Phase 5: SummarizerAgent (synthesis)
+        # ══════════════════════════════════════════════════════════════
+        if dr_meta['completed_phase'] < 5:
+            # ── Build source index and pre-process sources before synthesis ──
+            all_retriever_keys = successful_write_keys + deep_write_keys + contradiction_write_keys
+            self._build_source_index(context, all_retriever_keys)
+            self._preprocess_sources(context, all_retriever_keys, sub_queries)
+
+            synth_id = f"T{str(node_offset).zfill(3)}"
+            synth_key = f"research_synthesis_{synth_id}"
+            synth_reads = ["processed_sources", "source_index", gap_analysis_key]
+
+            # Build focus-mode-specific synthesis instructions
+            focus_synth_extra = ""
+            if focus_mode == "code":
+                focus_synth_extra = (
+                    "FOCUS MODE: CODE. You MUST preserve ALL code blocks from sources. "
+                    "Wrap every code snippet in fenced markdown code blocks with the correct language tag "
+                    "(```python, ```javascript, etc.). Include complete function signatures, class definitions, "
+                    "and usage examples. Do NOT paraphrase or summarize code — include it verbatim. "
+                    "Organize code examples by dimension/topic. For each code block, explain what it does "
+                    "and cite its source using [[N]](url). "
+                )
+
+            synth_node = {
+                "id": synth_id,
+                "description": "Synthesize all sources into cited narrative",
+                "agent": "SummarizerAgent",
+                "agent_prompt": (
+                    f"THIS IS A DEEP RESEARCH SYNTHESIS. You are producing an EXHAUSTIVE, DEFINITIVE report. "
+                    f"Synthesize ALL research sources into a comprehensive narrative that extracts EVERY piece "
+                    f"of information from EVERY source. This report will be presented to a senior executive. "
+                    f"Read 'processed_sources' (organized by research dimension with excerpts) "
+                    f"and 'source_index' (mapping source numbers to REAL URLs and titles). "
+                    f"Original query: '{original_query}'. "
+                    f"{focus_synth_extra}"
+                    f"EXHAUSTIVENESS REQUIREMENTS: "
+                    f"1. Cover EVERY research dimension with 3-4 substantive paragraphs each. "
+                    f"2. Cite EVERY source at least once using [[N]](url) format where url is the ACTUAL URL "
+                    f"from source_index or processed_sources — NEVER use example.com or placeholder URLs. "
+                    f"3. Extract ALL specific data points: numbers, dates, percentages, names, quotes from source excerpts. "
+                    f"4. Include comparison tables where multiple sources provide comparable data. "
+                    f"5. Include per-paragraph confidence scoring (HIGH/MEDIUM/LOW). "
+                    f"6. Surface and RESOLVE contradictions explicitly — state which position has stronger evidence. "
+                    f"7. Each source in processed_sources has 'url' and 'index' fields — use those exact URLs. "
+                    f"8. MINIMUM 3000 words. Every paragraph must have specific data, not generic statements. "
+                    f"9. Leave NOTHING out. If a source was retrieved, its information MUST appear in the report."
+                ),
+                "reads": synth_reads,
+                "writes": [synth_key],
+                "status": "pending"
+            }
+
+            # Wire synthesis to gap analysis + all follow-up retrievers + contradiction retrievers
+            synth_edges = [{"source": gap_id, "target": synth_id}]
+            for fid in followup_ids:
+                synth_edges.append({"source": fid, "target": synth_id})
+            for cid in contradiction_ids:
+                synth_edges.append({"source": cid, "target": synth_id})
+
+            self._merge_plan_into_context({
+                "nodes": [synth_node],
+                "edges": synth_edges
+            })
+            await event_bus.publish("dag_expanded", "AgentLoop4", {
+                "phase": 5, "new_nodes": [synth_id],
+                "message": "Synthesizing sources with citations"
+            })
+
+            log_step(f"Deep Research Phase 5: Synthesis ({synth_id})", symbol="📝")
             await self._track_task(self._execute_dag(context))
 
+            if context.stop_requested:
+                return
+
+            # Save Phase 5 completion
+            dr_meta.update({
+                'completed_phase': 5,
+                'synth_id': synth_id,
+                'synth_key': synth_key,
+            })
+            context._save_session()
+
+        # Restore Phase 5 results
+        synth_id = dr_meta.get('synth_id', '')
+        synth_key = dr_meta.get('synth_key', '')
+
+        # ══════════════════════════════════════════════════════════════
+        # Phase 6: FormatterAgent (final report)
+        # ══════════════════════════════════════════════════════════════
+        if dr_meta['completed_phase'] < 6:
+            fmt_id = f"T{str(node_offset + 1).zfill(3)}"
+            fmt_key = f"formatted_report_{fmt_id}"
+
+            # Build focus-mode-specific formatter instructions
+            focus_fmt_extra = ""
+            if focus_mode == "code":
+                focus_fmt_extra = (
+                    "FOCUS MODE: CODE. The report MUST include ALL code blocks from the synthesis. "
+                    "Preserve every fenced code block verbatim — do NOT remove, truncate, or summarize code. "
+                    "Use proper syntax highlighting (```python, ```javascript, etc.). "
+                    "Add a dedicated '## Code Examples' or '## Implementation' section grouping all code snippets. "
+                    "For each code block include: source citation, language, and brief explanation. "
+                )
+
+            fmt_node = {
+                "id": fmt_id,
+                "description": "Format final research report",
+                "agent": "FormatterAgent",
+                "agent_prompt": (
+                    f"Generate the DEFINITIVE, EXHAUSTIVE final research report. "
+                    f"This is a deep research report being prepared as if for the Washington Post — "
+                    f"expect at least 4000-5000 words of detailed, data-rich content. "
+                    f"Original query: '{original_query}'. "
+                    f"Use all_globals_schema to find ALL available data — dig deep into raw source data, "
+                    f"not just summaries. Extract specific numbers, dates, names, percentages, and quotes. "
+                    f"{focus_fmt_extra}"
+                    f"REQUIRED SECTIONS: "
+                    f"1. Executive Summary (7-10 sentences with key takeaways) "
+                    f"2. Key Findings (numbered, with confidence levels and citations) "
+                    f"3. Detailed Analysis (6-8 subsections organized by research dimension, "
+                    f"each with 4-5 paragraphs of specific, data-rich content) "
+                    f"4. Contradictions & Debates (where sources disagree, with resolution analysis) "
+                    f"5. Methodology (search queries, sources analyzed, date range) "
+                    f"6. Complete Citation List (clickable markdown links). "
+                    f"CRITICAL: Use source_index to get REAL URLs for citations — NEVER use example.com or placeholder URLs. "
+                    f"Preserve all [[N]](url) citations from the synthesis exactly as-is. "
+                    f"Include comparison tables where data allows. "
+                    f"If some data is missing, note it but still produce the best report possible. "
+                    f"Output the report under BOTH 'markdown_report' AND '{fmt_key}' keys in your JSON response."
+                ),
+                "reads": [synth_key, "source_index"],
+                "writes": [fmt_key],
+                "status": "pending"
+            }
+
+            self._merge_plan_into_context({
+                "nodes": [fmt_node],
+                "edges": [{"source": synth_id, "target": fmt_id}]
+            })
+            await event_bus.publish("dag_expanded", "AgentLoop4", {
+                "phase": 6, "new_nodes": [fmt_id],
+                "message": "Generating final report"
+            })
+
+            log_step(f"Deep Research Phase 6: Report formatting ({fmt_id})", symbol="📄")
+            await self._track_task(self._execute_dag(context))
+
+            # ── Fallback: Ensure FormatterAgent always produces output ──
+            fmt_status = context.plan_graph.nodes.get(fmt_id, {}).get("status")
+            if fmt_status != "completed":
+                log_step("FormatterAgent didn't complete — running fallback with available data", symbol="⚠️")
+                # Reset formatter to pending and clear dependency edges so it can run
+                if fmt_id in context.plan_graph.nodes:
+                    context.plan_graph.nodes[fmt_id]["status"] = "pending"
+                    context.plan_graph.nodes[fmt_id]["error"] = None
+                # Remove incoming edges so get_ready_steps() won't block on failed predecessors
+                predecessors = list(context.plan_graph.predecessors(fmt_id))
+                for pred in predecessors:
+                    context.plan_graph.remove_edge(pred, fmt_id)
+                await self._track_task(self._execute_dag(context))
+
+            # Save Phase 6 completion
+            dr_meta.update({
+                'completed_phase': 6,
+                'fmt_id': fmt_id,
+                'fmt_key': fmt_key,
+            })
+            context._save_session()
+
+        # Restore Phase 6 results
+        fmt_id = dr_meta.get('fmt_id', '')
+        fmt_key = dr_meta.get('fmt_key', '')
+
         # ── Post-process: Fix citations with real URLs from source_index ──
-        self._fix_citations(context, synth_key)
-        self._fix_citations(context, fmt_key)
+        if synth_key:
+            self._fix_citations(context, synth_key)
+        if fmt_key:
+            self._fix_citations(context, fmt_key)
 
         log_step("Deep research complete", symbol="✅")
 
@@ -941,12 +1214,12 @@ class AgentLoop4:
 
         return []
 
-    def _extract_followup_queries(self, context, gap_analysis_key: str) -> list:
-        """Extract follow-up queries from gap analysis output. Returns list of query strings, capped at 3."""
+    def _extract_followup_queries(self, context, followup_queries_key: str) -> list:
+        """Extract follow-up queries from globals_schema. Returns list of query strings, capped at 3."""
         import json as _json
 
         gs = context.plan_graph.graph.get('globals_schema', {})
-        raw = gs.get(gap_analysis_key)
+        raw = gs.get(followup_queries_key)
         if raw is None:
             return []
 
@@ -957,6 +1230,11 @@ class AgentLoop4:
             except (_json.JSONDecodeError, TypeError):
                 return []
 
+        # List → extract query strings directly
+        if isinstance(raw, list):
+            result = [q if isinstance(q, str) else q.get("query", str(q)) for q in raw]
+            return [q for q in result if q.strip()][:3]
+
         # Dict → look for followup_queries key (or variants)
         if isinstance(raw, dict):
             for key in ("followup_queries", "follow_up_queries", "deep_queries", "targeted_queries"):
@@ -964,10 +1242,52 @@ class AgentLoop4:
                 if queries and isinstance(queries, list):
                     result = [q if isinstance(q, str) else q.get("query", str(q)) for q in queries]
                     return [q for q in result if q.strip()][:3]
-            # Check nested output
-            nested = raw.get("output")
-            if isinstance(nested, dict):
-                return self._extract_followup_queries(context, gap_analysis_key)
+
+        return []
+
+    def _extract_contradiction_queries(self, context, contradiction_queries_key: str, contradictions_key: str = None) -> list:
+        """Extract contradiction-specific verification queries from globals_schema.
+        First tries the dedicated contradiction_queries key, then falls back to
+        generating queries from the contradictions list.
+        Returns list of query strings, capped at 3."""
+        import json as _json
+
+        gs = context.plan_graph.graph.get('globals_schema', {})
+
+        # Primary: look for explicit contradiction_queries in globals_schema
+        raw = gs.get(contradiction_queries_key)
+        if raw is not None:
+            if isinstance(raw, str):
+                try:
+                    raw = _json.loads(raw)
+                except (_json.JSONDecodeError, TypeError):
+                    raw = None
+
+            if isinstance(raw, list) and raw:
+                result = [q if isinstance(q, str) else q.get("query", str(q)) for q in raw]
+                return [q for q in result if q.strip()][:3]
+
+        # Fallback: generate queries from contradictions list
+        if contradictions_key:
+            contradictions_raw = gs.get(contradictions_key)
+            if contradictions_raw is not None:
+                if isinstance(contradictions_raw, str):
+                    try:
+                        contradictions_raw = _json.loads(contradictions_raw)
+                    except (_json.JSONDecodeError, TypeError):
+                        contradictions_raw = None
+
+                if isinstance(contradictions_raw, list) and contradictions_raw:
+                    generated_queries = []
+                    for c in contradictions_raw[:3]:
+                        if isinstance(c, str) and len(c) > 20:
+                            generated_queries.append(f"verify: {c[:150]}")
+                        elif isinstance(c, dict):
+                            claim = c.get("claim") or c.get("claim_a") or c.get("details") or c.get("claim_1", "")
+                            if claim and len(claim) > 20:
+                                generated_queries.append(f"verify: {claim[:150]}")
+                    if generated_queries:
+                        return generated_queries
 
         return []
 
@@ -1123,7 +1443,7 @@ class AgentLoop4:
                 idx = url_to_index.get(url, "?")
                 # Code focus mode: larger excerpts to preserve code blocks
                 focus = context.plan_graph.graph.get('focus_mode', '')
-                max_chars = 12000 if focus == "code" else 4000
+                max_chars = 12000 if focus == "code" else 8000
                 dim_sources.append({
                     "index": idx,
                     "url": url,

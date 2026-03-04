@@ -76,7 +76,7 @@ Example node:
   "id": "T005",
   "description": "Analyze research gaps and contradictions",
   "agent": "ThinkerAgent",
-  "agent_prompt": "Analyze the following research sources for coverage gaps, contradictions, and weak evidence. For each gap, generate a targeted follow-up search query. Sources: <reads from Phase 2 outputs>. Output: gap_analysis (list of {dimension, gap_description, severity}), followup_queries (list of targeted queries), contradictions (list of {claim, source_a, source_b, details}).",
+  "agent_prompt": "Analyze the following research sources for coverage gaps, contradictions, and weak evidence. For each gap, generate a targeted follow-up search query. For each contradiction, generate a targeted verification query to resolve it. Sources: <reads from Phase 2 outputs>. Output: gap_analysis (list of {dimension, gap_description, severity}), followup_queries (list of targeted queries), contradictions (list of {claim, source_a, source_b, details}), contradiction_queries (list of targeted search queries to verify and resolve each contradiction).",
   "reads": ["initial_sources_T002", "initial_sources_T003", "initial_sources_T004"],
   "writes": ["gap_analysis_T005", "followup_queries_T005", "contradictions_T005"]
 }
@@ -88,6 +88,13 @@ Example node:
 - Use `search_web_with_text_content` with `integer=10` to get 10 results per follow-up query
 - Apply focus_mode constraints
 - Output variables: `deep_sources_T00N`
+
+### Phase 4.5: Contradiction Resolution Search (RetrieverAgent × N)
+- Takes `contradiction_queries` from Phase 3 gap analysis output
+- Spins up RetrieverAgent for EACH contradiction-specific verification query
+- These searches aim to find authoritative evidence to resolve conflicting claims
+- Results are fed into the SummarizerAgent alongside all other sources
+- Output variables: `contradiction_sources_T00N`
 
 ### Phase 5: Synthesis with Citations (SummarizerAgent)
 - Reads ALL sources (initial + deep) plus gap analysis and contradictions

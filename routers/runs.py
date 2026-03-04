@@ -551,7 +551,8 @@ async def list_runs():
                         "query": query,
                         "created_at": created_at,
                         "status": computed_status,
-                        "total_tokens": total_tokens
+                        "total_tokens": total_tokens,
+                        "mode": graph_details.get("research_mode", "standard")
                     })
                 except:
                     continue
@@ -653,6 +654,19 @@ async def approve_queries(run_id: str, request: QueryApprovalRequest):
             loop._approved_queries = request.queries
             loop._query_approval_event.set()
             return {"id": run_id, "status": "approved", "query_count": len(request.queries)}
+        raise HTTPException(status_code=400, detail="No pending query approval for this run")
+    raise HTTPException(status_code=404, detail="Active run not found")
+
+
+@router.post("/runs/{run_id}/reject_queries")
+async def reject_queries(run_id: str):
+    """Reject decomposed queries and stop the agent"""
+    if run_id in active_loops:
+        loop = active_loops[run_id]
+        if loop._query_approval_event and not loop._query_approval_event.is_set():
+            loop._queries_rejected = True
+            loop._query_approval_event.set()
+            return {"id": run_id, "status": "rejected"}
         raise HTTPException(status_code=400, detail="No pending query approval for this run")
     raise HTTPException(status_code=404, detail="Active run not found")
 

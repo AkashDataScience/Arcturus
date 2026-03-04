@@ -153,6 +153,77 @@ def mark_iteration_done(run_id: str, iteration: int, synthesis_output: str = "")
     _save(G, run_id)
 
 
+def add_thinker_node(
+    run_id: str,
+    contradictions: list[str],
+    resolution_queries: list[str],
+) -> str:
+    """Add a ThinkerAgent node for contradiction analysis."""
+    G = _load(run_id)
+    if G is None:
+        return ""
+
+    node_id = "ThinkerAgent"
+    G.add_node(node_id, **_node_defaults(
+        node_id,
+        agent="ThinkerAgent",
+        agent_prompt=f"Analyzing {len(contradictions)} contradictions",
+        status="completed",
+        output={
+            "contradictions": contradictions,
+            "resolution_queries": resolution_queries,
+        },
+    ))
+
+    # Connect from the last synthesis node
+    synth_nodes = [n for n in G.nodes if n.endswith("_Synthesize")]
+    if synth_nodes:
+        last_synth = sorted(synth_nodes)[-1]
+        G.add_edge(last_synth, node_id)
+
+    _save(G, run_id)
+    return node_id
+
+
+def add_final_synthesis_node(run_id: str) -> str:
+    """Add a FinalSynthesizerAgent node connected to thinker and resolution nodes."""
+    G = _load(run_id)
+    if G is None:
+        return ""
+
+    node_id = "FinalSynthesizer"
+    G.add_node(node_id, **_node_defaults(
+        node_id,
+        agent="FinalSynthesizerAgent",
+        status="running",
+    ))
+
+    # Connect from ThinkerAgent if it exists
+    if "ThinkerAgent" in G.nodes:
+        G.add_edge("ThinkerAgent", node_id)
+    else:
+        # Connect from last synthesis node if no thinker
+        synth_nodes = [n for n in G.nodes if n.endswith("_Synthesize")]
+        if synth_nodes:
+            G.add_edge(sorted(synth_nodes)[-1], node_id)
+
+    _save(G, run_id)
+    return node_id
+
+
+def mark_final_synthesis_done(run_id: str, output: str = "") -> None:
+    """Mark the FinalSynthesizer node as completed."""
+    G = _load(run_id)
+    if G is None:
+        return
+
+    if "FinalSynthesizer" in G.nodes:
+        G.nodes["FinalSynthesizer"]["status"] = "completed"
+        G.nodes["FinalSynthesizer"]["output"] = output
+
+    _save(G, run_id)
+
+
 def mark_session_done(run_id: str) -> None:
     """Mark the entire session as completed."""
     G = _load(run_id)

@@ -105,10 +105,10 @@ Use the `source_index` input to look up the URL and title for each source number
 When your inputs contain `processed_sources` (organized by research dimension):
 1. **Cover ALL Dimensions**: Write at least one paragraph for EVERY dimension in the processed_sources.
 2. **Cite ALL Sources**: Every source in the processed_sources must be cited at least once. If a source has no relevant information, note: "Source [[N]](url) was reviewed but contained no relevant data."
-3. **Minimum Depth**: For each dimension with 3+ sources, write at least 2 paragraphs (300+ words).
+3. **Minimum Depth**: For each dimension with 3+ sources, write at least 3-4 paragraphs (500+ words).
 4. **Extract Specifics**: Never paraphrase generically. Extract specific numbers, dates, names, percentages, and quotes from source excerpts.
 5. **Cross-Reference**: When discussing a finding, check if other dimensions' sources corroborate or contradict it.
-6. **Minimum 1500 words** for multi-source deep research synthesis.
+6. **Minimum 3000 words** for multi-source deep research synthesis. Every source must be cited. Every data point must be extracted.
 
 ---
 

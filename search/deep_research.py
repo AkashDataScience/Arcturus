@@ -18,7 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from search.query_decomposer import decompose
 from search.crawl_pipeline import CrawlPipeline, SourceDocument
-from search.synthesizer import synthesize, identify_gaps, SynthesisResult
+from search.synthesizer import (
+    synthesize, identify_gaps, resolve_contradictions,
+    final_synthesize, SynthesisResult,
+)
 from search.focus_modes import get_focus_config
 from search import graph_bridge
 
@@ -120,7 +123,7 @@ class DeepResearchOrchestrator:
                 })
 
                 docs = await self.pipeline.search_and_extract(
-                    sub_queries, top_k=10
+                    sub_queries, top_k=15, freshness=focus_cfg.freshness
                 )
 
                 # Convert SourceDocuments to dicts for synthesizer
@@ -201,6 +204,91 @@ class DeepResearchOrchestrator:
                     # Next iteration searches for the gaps
                     current_query = "; ".join(gaps)
 
+            # ── Phase 5: Thinker Agent (Contradiction Resolution) ──
+            contradictions = final_result.contradictions if final_result else []
+            resolution_sources: list[dict] = []
+
+            if contradictions and not self._stopped:
+                yield DeepResearchEvent("phase", {
+                    "phase": "thinking",
+                    "contradiction_count": len(contradictions),
+                    "contradictions": contradictions,
+                })
+
+                resolution_queries = await resolve_contradictions(
+                    query=query,
+                    contradictions=contradictions,
+                )
+
+                graph_bridge.add_thinker_node(run_id, contradictions, resolution_queries)
+
+                yield DeepResearchEvent("thinking", {
+                    "contradictions": contradictions,
+                    "resolution_queries": resolution_queries,
+                })
+
+                if resolution_queries and not self._stopped:
+                    # ── Phase 5b: Resolution Search ──
+                    yield DeepResearchEvent("phase", {
+                        "phase": "resolution_search",
+                        "query_count": len(resolution_queries),
+                        "queries": resolution_queries,
+                    })
+
+                    graph_bridge.add_search_nodes(
+                        run_id, resolution_queries, iteration=max_iterations + 1
+                    )
+
+                    resolution_docs = await self.pipeline.search_and_extract(
+                        resolution_queries, top_k=10, freshness=focus_cfg.freshness
+                    )
+                    resolution_sources = [
+                        asdict(d) for d in resolution_docs if d.error is None
+                    ]
+
+                    for i in range(1, len(resolution_queries) + 1):
+                        node_id = f"I{max_iterations + 1}_Search_{i}"
+                        graph_bridge.update_search_node(
+                            run_id, node_id, "completed",
+                            {"source_count": len(resolution_sources)},
+                        )
+
+                    yield DeepResearchEvent("sources", {
+                        "iteration": max_iterations + 1,
+                        "phase": "resolution",
+                        "new_sources": len(resolution_sources),
+                        "total_sources": len(all_sources) + len(resolution_sources),
+                        "sample_urls": [d["url"] for d in resolution_sources[:5]],
+                    })
+
+            # ── Phase 6: Final Synthesis ──
+            if not self._stopped:
+                yield DeepResearchEvent("phase", {
+                    "phase": "final_synthesis",
+                    "total_source_count": len(all_sources) + len(resolution_sources),
+                })
+
+                graph_bridge.add_final_synthesis_node(run_id)
+
+                final_result = await final_synthesize(
+                    query=query,
+                    all_sources=all_sources,
+                    resolution_sources=resolution_sources,
+                    contradictions=contradictions,
+                    focus_mode=focus_mode,
+                )
+
+                graph_bridge.mark_final_synthesis_done(
+                    run_id, final_result.answer_md[:500]
+                )
+
+                yield DeepResearchEvent("final_synthesis", {
+                    "markdown": final_result.answer_md,
+                    "citation_count": len(final_result.citations),
+                    "executive_summary": final_result.executive_summary,
+                    "contradictions_resolved": final_result.contradictions,
+                })
+
             # ── Done ──
             graph_bridge.mark_session_done(run_id)
 
@@ -212,7 +300,7 @@ class DeepResearchOrchestrator:
                 "run_id": run_id,
                 "final_report": final_result.answer_md if final_result else "",
                 "citations": citations_list,
-                "total_sources": len(all_sources),
+                "total_sources": len(all_sources) + len(resolution_sources),
                 "executive_summary": final_result.executive_summary if final_result else "",
             })
 
