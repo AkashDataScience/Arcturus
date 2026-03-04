@@ -21,7 +21,8 @@ import { Button } from '../ui/button';
 const QueryApprovalDialog: React.FC<{
     approval: { queries: any[]; runId: string; originalQuery: string };
     onApprove: (runId: string, queries: any[]) => Promise<void>;
-}> = ({ approval, onApprove }) => {
+    onReject: (runId: string) => Promise<void>;
+}> = ({ approval, onApprove, onReject }) => {
     const [editableQueries, setEditableQueries] = useState<{ query: string; dimension: string }[]>(() =>
         approval.queries.map((q: any) => ({
             query: typeof q === 'string' ? q : (q.query || ''),
@@ -53,8 +54,12 @@ const QueryApprovalDialog: React.FC<{
     const hasEmptyQuery = editableQueries.some(q => q.query.trim().length === 0);
     const canApprove = editableQueries.length > 0 && !hasEmptyQuery;
 
+    const handleClose = () => {
+        onReject(approval.runId);
+    };
+
     return (
-        <Dialog open={true} onOpenChange={() => {}}>
+        <Dialog open={true} onOpenChange={(open) => { if (!open) handleClose(); }}>
             <DialogContent className="sm:max-w-2xl bg-card border-border" onPointerDownOutside={e => e.preventDefault()}>
                 <DialogHeader>
                     <DialogTitle className="text-foreground flex items-center gap-2">
@@ -100,13 +105,23 @@ const QueryApprovalDialog: React.FC<{
                         <Plus className="w-3.5 h-3.5" />
                         Add Query
                     </Button>
-                    <Button
-                        onClick={handleApprove}
-                        disabled={!canApprove}
-                        className="bg-neon-yellow text-charcoal-950 hover:bg-neon-yellow/90 font-bold disabled:opacity-50"
-                    >
-                        Approve & Continue ({editableQueries.filter(q => q.query.trim()).length})
-                    </Button>
+                    <div className="flex gap-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleClose}
+                            className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            onClick={handleApprove}
+                            disabled={!canApprove}
+                            className="bg-neon-yellow text-charcoal-950 hover:bg-neon-yellow/90 font-bold disabled:opacity-50"
+                        >
+                            Approve & Continue ({editableQueries.filter(q => q.query.trim()).length})
+                        </Button>
+                    </div>
                 </DialogFooter>
             </DialogContent>
         </Dialog>
@@ -177,6 +192,7 @@ export const AppLayout: React.FC = () => {
     // Query Approval Gate
     const pendingQueryApproval = useAppStore(s => s.pendingQueryApproval);
     const approveQueries = useAppStore(s => s.approveQueries);
+    const rejectQueries = useAppStore(s => s.rejectQueries);
     const startXRef = useRef(0);
     const startWidthRef = useRef(0);
 
@@ -378,6 +394,7 @@ export const AppLayout: React.FC = () => {
                 <QueryApprovalDialog
                     approval={pendingQueryApproval}
                     onApprove={approveQueries}
+                    onReject={rejectQueries}
                 />
             )}
         </div>

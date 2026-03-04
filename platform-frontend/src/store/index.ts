@@ -432,6 +432,7 @@ interface EventBusSlice {
     resetResearchProgress: () => void;
     pendingQueryApproval: { queries: any[]; runId: string; originalQuery: string } | null;
     approveQueries: (runId: string, queries: any[]) => Promise<void>;
+    rejectQueries: (runId: string) => Promise<void>;
     dismissQueryApproval: () => void;
 }
 
@@ -584,6 +585,14 @@ export const useAppStore = create<AppState>()(
                 set({ pendingQueryApproval: null });
                 // Restart polling — it may have auto-stopped because all nodes looked "completed"
                 get().startPolling(runId);
+            },
+            rejectQueries: async (runId: string) => {
+                try {
+                    await api.post(`${API_BASE}/runs/${runId}/reject_queries`);
+                } catch (e) {
+                    console.error("Failed to reject queries:", e);
+                }
+                set({ pendingQueryApproval: null });
             },
             dismissQueryApproval: () => set({ pendingQueryApproval: null }),
             startEventStream: () => {
@@ -859,7 +868,8 @@ export const useAppStore = create<AppState>()(
                         createdAt: Date.now(),
                         status: 'running',
                         model: res.model || model || 'default',
-                        ragEnabled: true
+                        ragEnabled: true,
+                        mode: (mode as Run['mode']) || 'standard'
                     };
                     get().addRun(newRun);
 

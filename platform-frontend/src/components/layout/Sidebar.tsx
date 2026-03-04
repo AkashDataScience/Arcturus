@@ -311,6 +311,11 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
                                                                 : "text-foreground group-hover:text-foreground/80"
                                                     )}>
                                                         {run.name}
+                                                        {run.mode === 'deep_research' && (
+                                                            <span className="inline-flex ml-2.5 align-middle px-1.5 py-0.5 rounded text-[8px] font-semibold tracking-tight bg-primary/15 text-primary border border-primary/20">
+                                                                Deep Research
+                                                            </span>
+                                                        )}
                                                     </p>
                                                 </div>
                                                 {/* Build App Button - Top Right */}

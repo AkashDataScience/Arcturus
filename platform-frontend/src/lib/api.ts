@@ -10,6 +10,7 @@ export interface API_Run {
     query: string;
     model?: string;  // Model used for this run
     total_tokens?: number;
+    mode?: string;  // "standard" or "deep_research"
 }
 
 export interface API_RunDetail {
@@ -32,7 +33,8 @@ export const api = {
             status: r.status as Run['status'],
             model: r.model || 'default', // Use model from response or 'default'
             ragEnabled: true,
-            total_tokens: r.total_tokens
+            total_tokens: r.total_tokens,
+            mode: (r.mode as Run['mode']) || 'standard'
         }));
     },
 
