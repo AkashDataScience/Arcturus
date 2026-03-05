@@ -14,9 +14,34 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from unittest.mock import patch, AsyncMock
+
 # Reset WebChatAdapter class-level outbox between tests
 from channels.webchat import WebChatAdapter
 from routers import nexus as nexus_router
+
+
+class MockRealAgent:
+    def __init__(self, session_id):
+        self.session_id = session_id
+        self.msg_count = 0
+    
+    async def process_message(self, envelope):
+        self.msg_count += 1
+        return {
+            "status": "processed",
+            "reply": f"mock reply {self.msg_count}",
+            "session_id": self.session_id,
+            "full_summary": {},
+            "message_number": self.msg_count  # Required by test assertions
+        }
+
+async def mock_agent_factory_func(session_id):
+    if not hasattr(mock_agent_factory_func, "agents"):
+        mock_agent_factory_func.agents = {}
+    if session_id not in mock_agent_factory_func.agents:
+        mock_agent_factory_func.agents[session_id] = MockRealAgent(session_id)
+    return mock_agent_factory_func.agents[session_id]
 
 
 def _make_client() -> TestClient:
@@ -24,12 +49,17 @@ def _make_client() -> TestClient:
     # Reset shared bus singleton and outboxes so each test is isolated.
     import shared.state as state
     state._message_bus = None
+    state.create_real_agent = mock_agent_factory_func
     WebChatAdapter._outboxes.clear()
 
     app = FastAPI()
     app.include_router(nexus_router.router, prefix="/api")
     # Also reset the router's cached bus reference
     nexus_router._bus = None
+    
+    # Reset mock agents
+    mock_agent_factory_func.agents = {}
+    
     return TestClient(app)
 
 
