@@ -96,5 +96,4 @@ benchmark_results.txt
 Canvas_Pic_Current.json
 memory/remme_staging.json
 memory/episodes/
-scripts/github/PR_body*.md
-scripts/github/Pr_Body*.md
+scripts/github/[Pp][Rr]_[Bb]ody*.md
