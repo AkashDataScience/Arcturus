@@ -6,6 +6,7 @@ from nodes.discovery import GatewayAdvertiser
 
 class TestListener(ServiceListener):
     def __init__(self):
+        super().__init__()
         self.found_services = []
 
     def add_service(self, zc, type_, name):

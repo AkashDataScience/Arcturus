@@ -12,12 +12,12 @@ sys.path.append(os.getcwd())
 from agents.base_agent import AgentRunner
 from core.registry import registry
 from core.bootstrap import bootstrap_agents
+import pytest
 from mcp_servers.multi_mcp import MultiMCP
 
+@pytest.mark.skipif(os.getenv("RUN_EXTERNAL_TESTS") != "1", reason="Set RUN_EXTERNAL_TESTS=1 to run external LLM-dependent test")
 class TestSelfCorrection(unittest.IsolatedAsyncioTestCase):
     async def test_ui_self_correction(self):
-        if os.getenv("RUN_EXTERNAL_TESTS") != "1":
-            self.skipTest("Set RUN_EXTERNAL_TESTS=1 to run external LLM-dependent test")
 
         # 1. Bootstrap
         bootstrap_agents()
