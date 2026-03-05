@@ -68,3 +68,8 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 include = ["agents*", "config*", "core*", "mcp_servers*", "memory*", "ops*", "remme*", "routers*", "shared*", "tools*", "ui*"]
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.3.0",
+]
