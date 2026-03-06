@@ -31,7 +31,7 @@ memory/user_model/
 
 # Data & Documents (Large files/datasets)
 data/
-documents/
+/documents/
 mcp_servers/documents/
 mcp_servers/faiss_index/
 classNotes/
@@ -87,6 +87,9 @@ benchmark_results.txt
 !platform-frontend/public/*.ico
 !platform-frontend/public/*.png
 !platform-frontend/public/*.jpg
+
+# Studio runtime output (generated PPTX artifacts)
+/studio/
 
 # Added by Arcturus
 .arcturus/
