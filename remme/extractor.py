@@ -6,6 +6,10 @@ This module handles the LLM-based extraction that produces:
 2. Raw preferences → Staging queue (normalized later by Normalizer)
 
 The extractor uses free-form extraction - it doesn't need to know the hub schema.
+
+DEPRECATED when MNEMO_ENABLED=true: Use memory.unified_extractor.UnifiedExtractor and
+shared.state.get_unified_extractor() instead. Legacy path remains for backward compatibility
+until the Mnemo path is stable and the flag is always on.
 """
 
 import requests

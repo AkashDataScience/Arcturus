@@ -9,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
 import numpy as np
-import pdb
 
 try:
     from qdrant_client import QdrantClient
@@ -115,10 +114,10 @@ class QdrantVectorStore:
                     log_error(f"Failed to create payload index for {field}: {e}")
 
     def _ingest_to_knowledge_graph(self, memory_id: str, text: str, payload: Dict[str, Any]) -> None:
-        """Extract entities, write to Neo4j, update Qdrant payload with entity_ids."""
+        """Extract entities (and facts when Mnemo), write to Neo4j, update Qdrant payload with entity_ids."""
         try:
             from memory.knowledge_graph import get_knowledge_graph
-            from memory.entity_extractor import EntityExtractor
+            from memory.mnemo_config import is_mnemo_enabled
 
             kg = get_knowledge_graph()
             if not kg or not kg.enabled:
@@ -127,10 +126,21 @@ class QdrantVectorStore:
             if not user_id:
                 return
             session_id = payload.get("session_id") or "unknown"
-            extractor = EntityExtractor()
-            extracted = extractor.extract(text)
-            print(f"[QdrantVectorStore] Extracted entities {extracted} from the text {text}") # TODO
-            # pdb.set_trace()
+            if is_mnemo_enabled():
+                from shared.state import get_unified_extractor
+                unified = get_unified_extractor()
+                extraction = unified.extract_from_memory_text(text)
+                legacy = extraction.to_legacy_entity_result()
+                entities = legacy.get("entities")
+                entity_relationships = legacy.get("entity_relationships")
+                user_facts = legacy.get("user_facts")
+            else:
+                from memory.entity_extractor import EntityExtractor
+                extractor = EntityExtractor()
+                extracted = extractor.extract(text)
+                entities = extracted.get("entities")
+                entity_relationships = extracted.get("entity_relationships")
+                user_facts = extracted.get("user_facts")
             result = kg.ingest_memory(
                 memory_id=memory_id,
                 text=text,
@@ -138,9 +148,9 @@ class QdrantVectorStore:
                 session_id=session_id,
                 category=payload.get("category", "general"),
                 source=payload.get("source", "manual"),
-                entities=extracted.get("entities"),
-                entity_relationships=extracted.get("entity_relationships"),
-                user_facts=extracted.get("user_facts"),
+                entities=entities,
+                entity_relationships=entity_relationships,
+                user_facts=user_facts,
             )
             entity_ids = result.get("entity_ids", result if isinstance(result, list) else [])
             entity_labels = result.get("entity_labels", []) if isinstance(result, dict) else []

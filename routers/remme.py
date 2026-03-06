@@ -87,7 +87,6 @@ async def background_smart_scan():
                     remme_store.mark_run_scanned(run_id)
                     continue
 
-                pdb.set_trace()
                 hist = [{"role": "user", "content": query}]
                 if output:
                     hist.append({"role": "assistant", "content": output})
@@ -105,23 +104,29 @@ async def background_smart_scan():
                 except Exception:
                     pass
                 
-                # Extract memories AND preferences using new format
-                result = await asyncio.to_thread(extractor.extract, query, hist, existing)
-                
-                # Handle both new tuple format and legacy list format
-                if isinstance(result, tuple):
-                    commands, preferences = result
+                # Extract memories (and preferences when legacy path)
+                from memory.mnemo_config import is_mnemo_enabled
+                if is_mnemo_enabled():
+                    from shared.state import get_unified_extractor
+                    unified = get_unified_extractor()
+                    extraction = await asyncio.to_thread(
+                        unified.extract_from_session, query, hist, existing
+                    )
+                    commands = [{"action": m.action, "text": m.text, "id": m.id} for m in extraction.memories]
+                    preferences = None
                 else:
-                    commands = result
-                    preferences = {}
+                    result = await asyncio.to_thread(extractor.extract, query, hist, existing)
+                    if isinstance(result, tuple):
+                        commands, preferences = result
+                    else:
+                        commands = result
+                        preferences = {}
                 
-                # Apply memory commands to store
                 if commands:
                     for cmd in commands:
                         action = cmd.get("action")
                         text = cmd.get("text")
                         tid = cmd.get("id")
-                        
                         try:
                             if action == "add" and text:
                                 emb = get_embedding(text, task_type="search_document")
@@ -137,8 +142,7 @@ async def background_smart_scan():
                         except Exception as e:
                             print(f"❌ RemMe Action Failed: {e}")
                 
-                # Write preferences to staging queue (will be normalized later)
-                if preferences:
+                if not is_mnemo_enabled() and preferences:
                     try:
                         from remme.staging import get_staging_store
                         staging = get_staging_store()
@@ -244,27 +248,28 @@ async def cleanup_dangling_memories():
 
 @router.post("/add")
 async def add_memory(request: AddMemoryRequest):
-    """Manually add a memory and auto-extract to UserModel hubs."""
+    """Manually add a memory. When MNEMO_ENABLED=false, auto-extract to UserModel hubs; when true, ingestion uses unified extractor (e.g. in Qdrant store)."""
     try:
         emb = get_embedding(request.text, task_type="search_query")
         memory = remme_store.add(request.text, emb, category=request.category, source="manual")
         
-        # Auto-extract preferences from this single memory
-        try:
-            from remme.bootstrap import extract_from_memories, apply_extraction_to_hubs
-            
-            print(f"🔄 Auto-extracting preferences from: '{request.text[:50]}...'")
-            extraction = await extract_from_memories([{"text": request.text, "category": request.category}])
-            
-            if extraction:
-                changes = apply_extraction_to_hubs(extraction)
-                print(f"✅ Auto-extracted {len(changes)} preferences from new memory")
-                memory["extracted_preferences"] = changes
-            else:
+        from memory.mnemo_config import is_mnemo_enabled
+        if not is_mnemo_enabled():
+            try:
+                from remme.bootstrap import extract_from_memories, apply_extraction_to_hubs
+                print(f"🔄 Auto-extracting preferences from: '{request.text[:50]}...'")
+                extraction = await extract_from_memories([{"text": request.text, "category": request.category}])
+                if extraction:
+                    changes = apply_extraction_to_hubs(extraction)
+                    print(f"✅ Auto-extracted {len(changes)} preferences from new memory")
+                    memory["extracted_preferences"] = changes
+                else:
+                    memory["extracted_preferences"] = []
+            except Exception as e:
+                print(f"⚠️ Auto-extraction failed (memory still saved): {e}")
                 memory["extracted_preferences"] = []
-        except Exception as e:
-            print(f"⚠️ Auto-extraction failed (memory still saved): {e}")
-            memory["extracted_preferences"] = []
+        else:
+            memory["extracted_preferences"] = []  # step 3 will ingest via unified extractor in qdrant_store
         
         return {"status": "success", "memory": memory}
     except Exception as e:

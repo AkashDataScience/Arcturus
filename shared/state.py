@@ -226,6 +226,17 @@ def get_remme_extractor():
         _remme_extractor = RemmeExtractor()
     return _remme_extractor
 
+# Unified extractor (P11 Mnemo; used when MNEMO_ENABLED=true)
+_unified_extractor = None
+
+def get_unified_extractor():
+    """Get the UnifiedExtractor instance for Mnemo path (memories + entities + facts + evidence)."""
+    global _unified_extractor
+    if _unified_extractor is None:
+        from memory.unified_extractor import UnifiedExtractor
+        _unified_extractor = UnifiedExtractor()
+    return _unified_extractor
+
 # Skill Manager instance
 _skill_manager = None
 

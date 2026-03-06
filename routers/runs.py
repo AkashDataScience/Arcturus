@@ -13,6 +13,7 @@ from shared.state import (
     get_multi_mcp,
     get_remme_store,
     get_remme_extractor,
+    get_unified_extractor,
     signal_run_complete,
     push_stream_chunk,
     finish_stream,
@@ -249,14 +250,7 @@ async def process_run(run_id: str, query: str, source: str = "web", stream: bool
                 history = [{"role": "assistant", "content": final_output}]
 
                 print(f" Remme: Extracting facts from run {run_id}...")
-                # Pass existing memories from earlier search to context-aware extractor
-                # ⚡ RUN IN THREAD TO AVOID BLOCKING EVENT LOOP
-                commands, preferences = await asyncio.to_thread(
-                    remme_extractor.extract,
-                    query,
-                    history,
-                    existing_memories=results
-                )
+                from memory.mnemo_config import is_mnemo_enabled
 
                 def _resolve_memory_id(alias_or_id: str, existing: list) -> Optional[str]:
                     """Resolve T001-style alias (or slug_T002) to real Qdrant point ID; pass-through UUIDs/integers."""
@@ -264,16 +258,30 @@ async def process_run(run_id: str, query: str, source: str = "web", stream: bool
                         return alias_or_id
                     import re
                     s = str(alias_or_id).strip()
-                    # Exact T001, T002, ...
                     m = re.match(r"^T(\d+)$", s, re.IGNORECASE)
                     if not m:
-                        # LLM sometimes returns slug-style id, e.g. jons_office_location_T002
                         m = re.search(r"T(\d+)$", s, re.IGNORECASE)
                     if m:
                         idx = int(m.group(1)) - 1
                         if 0 <= idx < len(existing) and existing[idx].get("id"):
                             return existing[idx]["id"]
                     return alias_or_id
+
+                if is_mnemo_enabled():
+                    # Unified extractor: memories + entities + facts + evidence (step 3 will write Fact/Evidence to Neo4j)
+                    unified = get_unified_extractor()
+                    extraction = await asyncio.to_thread(
+                        unified.extract_from_session, query, history, existing_memories=results
+                    )
+                    commands = [{"action": m.action, "text": m.text, "id": m.id} for m in extraction.memories]
+                    preferences = None  # do not write to hubs; step 3 ingests facts to Neo4j
+                else:
+                    commands, preferences = await asyncio.to_thread(
+                        remme_extractor.extract,
+                        query,
+                        history,
+                        existing_memories=results,
+                    )
 
                 if commands:
                     for cmd in commands:
@@ -304,12 +312,12 @@ async def process_run(run_id: str, query: str, source: str = "web", stream: bool
                         except Exception as e:
                             print(f"❌ Remme Action Failed: {e}")
 
-                # Apply preferences to hubs
-                if preferences:
+                if not is_mnemo_enabled() and preferences:
                     from remme.extractor import apply_preferences_to_hubs
                     apply_preferences_to_hubs(preferences)
                     print(f"✅ Remme: Processed {len(preferences)} preference updates.")
 
+                if commands:
                     print(f"✅ Remme: Processed {len(commands)} memory updates.")
                 else:
                     print(f"ℹ️ Remme: No new facts extracted from run {run_id}.")
