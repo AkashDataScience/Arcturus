@@ -2,7 +2,9 @@
 # This module holds global state that is shared across all routers
 
 import logging as _logging
+import queue as _queue_mod
 import threading
+import time
 from pathlib import Path
 
 # Project root for path resolution in routers
@@ -23,8 +25,6 @@ active_loops = {}
 # - This is intentionally thread-based (voice pipeline uses threads today).
 # - We keep cancellation separate from orchestrator.state (IDLE/LISTENING/...)
 #   so both can be used safely across modules without circular dependencies.
-import time
-import threading
 
 _tts_state_lock = threading.Lock()
 
@@ -135,7 +135,6 @@ def pop_run_result(run_id: str) -> str | None:
 # Instead of waiting for the full output, the orchestrator can
 # receive text chunk-by-chunk via a queue and start speaking
 # immediately (sentence-level streaming).
-import queue as _queue_mod
 
 _stream_queues_lock = threading.Lock()
 _stream_queues: dict = {}         # run_id → queue.Queue
