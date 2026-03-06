@@ -49,24 +49,34 @@ Return ONLY valid JSON, no markdown."""
 class UnifiedExtractor:
     """
     Single-call extractor producing UnifiedExtractionResult.
+    Uses the unified_extraction skill for prompts (same pattern as entity_extractor).
     """
 
     def __init__(self, model: Optional[str] = None):
-        self.model = model or get_model("entity_extraction")
+        self.model = model or get_model("unified_extraction")
         self.api_url = get_ollama_url("chat")
+        self._prompt: Optional[str] = None
 
     def _load_prompt(self) -> str:
+        """Load prompt: Skill > file in skill folder > settings > inline fallback (same as entity_extractor)."""
+        if self._prompt is not None:
+            return self._prompt
         try:
             from shared.state import get_skill_manager
             skill = get_skill_manager().get_skill("unified_extraction")
             if skill and skill.prompt_text:
-                return skill.prompt_text.strip()
+                self._prompt = skill.prompt_text.strip()
+                return self._prompt
         except Exception:
             pass
-        path = Path(__file__).parent.parent / "core" / "skills" / "library" / "unified_extraction" / "SKILL.md"
-        if path.exists():
-            return path.read_text(encoding="utf-8", errors="replace").strip()
-        return settings.get("unified_extraction", {}).get("extraction_prompt") or UNIFIED_EXTRACTION_SYSTEM
+        skill_prompt_path = Path(__file__).parent.parent / "core" / "skills" / "library" / "unified_extraction" / "SKILL.md"
+        if skill_prompt_path.exists():
+            self._prompt = skill_prompt_path.read_text(encoding="utf-8", errors="replace").strip()
+        elif settings.get("unified_extraction", {}).get("extraction_prompt"):
+            self._prompt = settings["unified_extraction"]["extraction_prompt"]
+        else:
+            self._prompt = UNIFIED_EXTRACTION_SYSTEM
+        return self._prompt
 
     def extract_from_session(
         self,
