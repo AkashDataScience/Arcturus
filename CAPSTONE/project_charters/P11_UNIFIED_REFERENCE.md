@@ -25,7 +25,7 @@
 | **Retrieval gap (semantic returns 0)** | ✅ Addressed | Entity-first path runs independently; k=10; graph expansion; multi-tenant safe |
 | **Memory delete & orphan cleanup** | ✅ Done | `delete_memory` in `knowledge_graph.py`; qdrant_store calls it on delete |
 | **Session-level extraction** | ⏳ Not done | §8.2 — one pass for memories + preferences + entities from session |
-| **Preferences unification** | ⏳ Not done | §8.3 — move preferences/evidence into Qdrant + Neo4j |
+| **Preferences unification** | ⏳ In progress | Step 1 done (Fact+Evidence schema); §8.3 — move preferences/evidence into Qdrant + Neo4j |
 | **Spaces / space_id** | ⏳ Reserved | §8.4 — no code; hook documented for when Spaces are added |
 | **Entity-friendly Qdrant payload** | ⏳ Optional | §8.1 — beyond `entity_ids` + optional `entity_labels`; not implemented |
 | **Expansion depth** | ⏳ Future | One-hop only; `depth` parameter reserved for multi-hop |
@@ -154,6 +154,8 @@ Neo4j stores **extracted entities and relationships** from Remme memories. Link 
 | **Memory** | `id` (Qdrant id), `category`, `source`, `created_at` | Bridge to Qdrant; future: `space_id` or `IN_SPACE` |
 | **Session** | `id`, `session_id`, `original_query`, `created_at` | Provenance |
 | **Entity** | `id`, `type`, `name`, `canonical_name`, `composite_key`, `created_at` | Person, Company, Concept, etc. `name` = display; `canonical_name` = normalized; `composite_key` = `type::canonical_name` for dedupe |
+| **Fact** | `id`, `user_id`, `namespace`, `key`, `value_type`, `value_text`/`value_number`/`value_bool`/`value_json`, `confidence`, `source_mode`, `status`, `first_seen_at`, `last_seen_at`, `last_confirmed_at`, `editability` | Canonical user fact/preference; unique on (user_id, namespace, key) |
+| **Evidence** | `id`, `source_type`, `source_ref`, `timestamp` | Provenance for a fact (optional later: signal_category, raw_excerpt, confidence_delta) |
 
 **Relationships**
 
@@ -164,7 +166,12 @@ Neo4j stores **extracted entities and relationships** from Remme memories. Link 
 | CONTAINS_ENTITY | Memory → Entity | Memory mentions entity |
 | Entity–Entity | Entity → Entity | First-class: WORKS_AT, LOCATED_IN, MET, MET_AT, OWNS, PART_OF, MEMBER_OF, KNOWS, EMPLOYED_BY, LIVES_IN, BASED_IN (`ENTITY_REL_TYPES` in `knowledge_graph.py`). Fallback: RELATED_TO with `type`, `value`, `confidence`, `source_memory_ids` |
 | RELATED_TO | Entity → Entity | When extractor type not in ENTITY_REL_TYPES |
-| LIVES_IN, WORKS_AT, KNOWS, PREFERS | User → Entity | Derived user facts (with `source_memory_ids`) |
+| LIVES_IN, WORKS_AT, KNOWS, PREFERS | User → Entity | Derived from Fact+REFERS_TO (step 3); optional `confidence`, `source_memory_ids` |
+| HAS_FACT | User → Fact | User owns fact |
+| SUPPORTED_BY | Fact → Evidence | Evidence supports fact |
+| FROM_MEMORY, FROM_SESSION | Evidence → Memory, Evidence → Session | Evidence provenance |
+| REFERS_TO | Fact → Entity | Fact references an entity |
+| SUPERSEDES | Fact → Fact | Fact supersedes another |
 | CONTRADICTS | (Phase 5) | Reserved for conflicting facts |
 
 ### 6.3 Qdrant payload (arcturus_memories)
@@ -206,7 +213,7 @@ Query
 
 ## 7. Implementation status (verified in code)
 
-- **knowledge_graph.py:** `ENTITY_REL_TYPES` (WORKS_AT, LOCATED_IN, MET, MET_AT, OWNS, PART_OF, MEMBER_OF, KNOWS, EMPLOYED_BY, LIVES_IN, BASED_IN); canonical_name/composite_key; `resolve_entity_candidates` (exact → within-type fuzzy → global fallback); `expand_from_entities` (one-hop, user-scoped); `delete_memory` with orphan cleanup (`DETACH DELETE` for unreferenced entities).
+- **knowledge_graph.py:** `ENTITY_REL_TYPES`, `USER_ENTITY_REL_TYPES`; Fact and Evidence schema (constraints: Fact `(user_id, namespace, key)` unique, Evidence `id` unique); User─HAS_FACT→Fact, Fact─SUPPORTED_BY→Evidence, Evidence─FROM_*→Memory/Session, Fact─REFERS_TO→Entity, Fact─SUPERSEDES→Fact; canonical_name/composite_key; `resolve_entity_candidates`; `expand_from_entities` (one-hop, user-scoped); `delete_memory` with orphan cleanup; `create_user_entity_relationship` accepts optional `confidence` for backward compatibility.
 - **entity_extractor.py:** LLM extraction from memory text; `extract_from_query` for query NER; uses `entity_extraction` skill and model from config.
 - **memory_retriever.py:** `retrieve()` — semantic k=10; entity path independent; `result_ids` global dedupe; `_store_get_many`/`get_batch` for batch fetch; `expand_from_entities` and entity-first path both used.
 - **qdrant_store.py:** `_ingest_to_knowledge_graph` on add; on delete calls `kg.delete_memory(memory_id)` when KG enabled.
@@ -220,6 +227,8 @@ Query
 ## 8. Remaining / next steps (running list)
 
 Use this section as the single list of what to do next; update as you complete items.
+
+**Step 1 (Neo4j schema Fact + Evidence):** Done. Fact and Evidence node types, relationships (User─HAS_FACT→Fact, Fact─SUPPORTED_BY→Evidence, Evidence─FROM_MEMORY→Memory, Evidence─FROM_SESSION→Session, Fact─REFERS_TO→Entity, Fact─SUPERSEDES→Fact), and constraints (Fact unique on `(user_id, namespace, key)`, Evidence unique on `id`) added in `memory/knowledge_graph.py`. User–Entity edges documented as derived from Fact+REFERS_TO (step 3); optional `confidence` on User–Entity for backward compatibility. SchemaField nodes deferred.
 
 ### 8.1 Optional: Entity-friendly payload in Qdrant
 

@@ -2,12 +2,24 @@
 Neo4j Knowledge Graph — Stores extracted entities and relationships from Remme memories.
 
 Ties to Qdrant via memory_id (Qdrant point id) and entity_ids (Neo4j entity ids in Qdrant payload).
-Schema: User, Memory, Session, Entity nodes; HAS_MEMORY, FROM_SESSION, CONTAINS_ENTITY,
-RELATED_TO, LIVES_IN, WORKS_AT, KNOWS, PREFERS relationships.
+
+Schema — Nodes:
+  User, Memory, Session, Entity, Fact, Evidence
+
+Schema — Relationships:
+  User─HAS_MEMORY→Memory, Memory─FROM_SESSION→Session,
+  Memory─CONTAINS_ENTITY→Entity, Entity─(RELATED_TO|first-class)→Entity,
+  User─(LIVES_IN|WORKS_AT|KNOWS|PREFERS)→Entity (derived from Fact+REFERS_TO in ingestion; see step 3),
+  User─HAS_FACT→Fact, Fact─SUPPORTED_BY→Evidence,
+  Evidence─FROM_MEMORY→Memory, Evidence─FROM_SESSION→Session,
+  Fact─REFERS_TO→Entity, Fact─SUPERSEDES→Fact
+
+Fact node: user_id, namespace, key, value_type, value_text|value_number|value_bool|value_json,
+  confidence, source_mode, status, first_seen_at, last_seen_at, last_confirmed_at, editability.
+Evidence node (minimal): id, source_type, source_ref, timestamp.
 
 Future: space_id / Space dimension (Mnemo Spaces/Collections). When added, constrain
-retrieval (get_entities_for_user, expand_from_entities, get_memory_ids_for_entity_names)
-and ingestion (create_memory, ingest_memory) by space_id. See P11 design §9.4.
+retrieval and ingestion by space_id. See P11 design §9.4.
 
 Enable via NEO4J_ENABLED=true and NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD env vars.
 """
@@ -57,6 +69,11 @@ ENTITY_REL_TYPES = frozenset({
     "WORKS_AT", "LOCATED_IN", "MET", "MET_AT", "OWNS", "PART_OF", "MEMBER_OF", "KNOWS",
     "EMPLOYED_BY", "LIVES_IN", "BASED_IN",
 })
+
+# User–Entity relationship types. These edges are derived from Fact+REFERS_TO during ingestion
+# (step 3); existing code may also create them from legacy user_facts. Optional confidence
+# and source_memory_ids on these edges support backward compatibility during migration.
+USER_ENTITY_REL_TYPES = frozenset({"LIVES_IN", "WORKS_AT", "KNOWS", "PREFERS"})
 
 
 class KnowledgeGraph:
@@ -112,6 +129,9 @@ class KnowledgeGraph:
                 "CREATE CONSTRAINT memory_id IF NOT EXISTS FOR (m:Memory) REQUIRE m.id IS UNIQUE",
                 "CREATE CONSTRAINT session_id IF NOT EXISTS FOR (s:Session) REQUIRE s.session_id IS UNIQUE",
                 "CREATE CONSTRAINT entity_key IF NOT EXISTS FOR (e:Entity) REQUIRE e.composite_key IS UNIQUE",
+                # Fact: one row per (user_id, namespace, key) for upsert; Evidence: unique id
+                "CREATE CONSTRAINT fact_user_ns_key IF NOT EXISTS FOR (f:Fact) REQUIRE (f.user_id, f.namespace, f.key) IS UNIQUE",
+                "CREATE CONSTRAINT evidence_id IF NOT EXISTS FOR (ev:Evidence) REQUIRE ev.id IS UNIQUE",
             ]:
                 try:
                     session.run(q)
@@ -318,24 +338,34 @@ class KnowledgeGraph:
         self,
         user_id: str,
         entity_id: str,
-        rel_type: str,  # LIVES_IN, WORKS_AT, KNOWS, PREFERS
+        rel_type: str,  # LIVES_IN, WORKS_AT, KNOWS, PREFERS (USER_ENTITY_REL_TYPES)
         source_memory_ids: Optional[List[str]] = None,
+        confidence: Optional[float] = None,
     ) -> None:
-        """Create user-centric relationship: User -[:rel_type]-> Entity."""
-        if rel_type not in ("LIVES_IN", "WORKS_AT", "KNOWS", "PREFERS"):
+        """
+        Create user-centric relationship: User -[:rel_type]-> Entity.
+        These edges may be derived from Fact+REFERS_TO in the unified ingestion (step 3).
+        Optional confidence and source_memory_ids support backward compatibility during migration.
+        """
+        if rel_type not in USER_ENTITY_REL_TYPES:
             log_error(f"Invalid user-entity rel type: {rel_type}")
             return
+        set_clauses = ["r.source_memory_ids = $source_memory_ids"]
+        params: Dict[str, Any] = {
+            "user_id": user_id,
+            "entity_id": entity_id,
+            "source_memory_ids": source_memory_ids or [],
+        }
+        if confidence is not None:
+            set_clauses.append("r.confidence = $confidence")
+            params["confidence"] = confidence
         self._run_write(
             f"""
             MATCH (u:User {{user_id: $user_id}}), (e:Entity {{id: $entity_id}})
             MERGE (u)-[r:{rel_type}]->(e)
-            SET r.source_memory_ids = $source_memory_ids
+            SET {", ".join(set_clauses)}
             """,
-            {
-                "user_id": user_id,
-                "entity_id": entity_id,
-                "source_memory_ids": source_memory_ids or [],
-            },
+            params,
         )
 
     def ingest_memory(
