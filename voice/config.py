@@ -208,5 +208,13 @@ VOICE_CONFIG = {
         # instead of waiting for the full response
         "streaming_enabled": True,
     },
+    # -----------------------------
+    # Intent Gate configuration
+    # -----------------------------
+    "intent_gate": {
+        "use_llm": True,  # When True, uses ModelManager to classify intents
+        "fallback_to_rules": True, # If LLM fails, use regex-based classification
+        "model": "gemini", # Model key from models.json
+    },
 }
 
