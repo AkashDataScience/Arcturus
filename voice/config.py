@@ -241,10 +241,12 @@ VOICE_CONFIG = {
     # -----------------------------
     # Intent Gate configuration
     # -----------------------------
+    # Set use_llm False to avoid Gemini quota (429); rules + QUERY handle classification.
+    # When use_llm True, model must be a key from config/models.json (e.g. phi4 for Ollama).
     "intent_gate": {
-        "use_llm": True,  # When True, uses ModelManager to classify intents
-        "fallback_to_rules": True, # If LLM fails, use regex-based classification
-        "model": "gemini", # Model key from models.json
+        "use_llm": False,
+        "fallback_to_rules": True,
+        "model": "gemma3:4b",  # Ollama model when use_llm True; must exist in config/models.json
     },
 }
 

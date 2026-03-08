@@ -88,8 +88,10 @@ class DeepgramSTTService:
             print("❌ [DeepgramSTT] Cannot start — no DEEPGRAM_API_KEY.")
             return
 
+        if self._running:
+            return
         self._running = True
-        
+
         # Start loops but don't block on connection here
         self._send_thread = threading.Thread(target=self._send_loop, daemon=True)
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)

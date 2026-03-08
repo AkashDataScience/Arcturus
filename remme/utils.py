@@ -20,11 +20,13 @@ def get_embedding(text: str, task_type: str = "search_document") -> np.ndarray:
         prefix = f"{task_type}: "
         full_text = prefix + text if not text.startswith(prefix) else text
 
-        response = requests.post(
-            EMBED_URL,
-            json={"model": EMBED_MODEL, "input": full_text},
-            timeout=OLLAMA_TIMEOUT
-        )
+        payload = {"model": EMBED_MODEL, "input": full_text}
+        # Try /api/embed first; some Ollama versions use /api/embeddings
+        response = requests.post(EMBED_URL, json=payload, timeout=OLLAMA_TIMEOUT)
+        if response.status_code == 404:
+            response = requests.post(
+                get_ollama_url("embeddings"), json=payload, timeout=OLLAMA_TIMEOUT
+            )
         response.raise_for_status()
         data = response.json()
         # Ollama /api/embed returns "embeddings" (plural, array); legacy used "embedding" (singular)
@@ -46,5 +48,13 @@ def get_embedding(text: str, task_type: str = "search_document") -> np.ndarray:
         print(f"⚠️ Ollama Connection Error: {e}", file=sys.stderr)
         raise e
     except Exception as e:
-        print(f"Error generating embedding: {e}", file=sys.stderr)
-        return np.zeros(768, dtype=np.float32) # Fallback to empty vector
+        msg = str(e)
+        if "404" in msg or "501" in msg:
+            print(
+                "Embedding unavailable (Ollama 404/501). "
+                "Use a dedicated embedding model: ollama pull nomic-embed-text",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Error generating embedding: {e}", file=sys.stderr)
+        return np.zeros(768, dtype=np.float32)  # Fallback so Remme/RAG continue

@@ -54,6 +54,7 @@ export const VoicePanel: React.FC = () => {
     setClearPending(true);
     try {
       await voiceApi.clearSession();
+      await refresh();
       refreshSession();
     } finally {
       setClearPending(false);

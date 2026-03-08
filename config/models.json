@@ -17,6 +17,7 @@
       "embedding_model": "phi4",
       "url": {
         "generate": "http://localhost:11434/api/generate",
+        "chat": "http://localhost:11434/api/chat",
         "embed": "http://localhost:11434/api/embeddings"
       }
     },
@@ -26,6 +27,7 @@
       "embedding_model": "gemma3:12b",
       "url": {
         "generate": "http://localhost:11434/api/generate",
+        "chat": "http://localhost:11434/api/chat",
         "embed": "http://localhost:11434/api/embeddings"
       }
     },
@@ -35,6 +37,7 @@
       "embedding_model": "qwen2.5:32b-instruct-q4_0 ",
       "url": {
         "generate": "http://localhost:11434/api/generate",
+        "chat": "http://localhost:11434/api/chat",
         "embed": "http://localhost:11434/api/embeddings"
       }
     },
@@ -44,6 +47,7 @@
       "embedding_model": "qwen2.5:32b-instruct-q4_0 ",
       "url": {
         "generate": "http://localhost:11434/api/generate",
+        "chat": "http://localhost:11434/api/chat",
         "embed": "http://localhost:11434/api/embeddings"
       }
     },
@@ -52,6 +56,7 @@
       "model": "qwen2.5vl:latest",
       "url": {
         "generate": "http://localhost:11434/api/generate",
+        "chat": "http://localhost:11434/api/chat",
         "embed": "http://localhost:11434/api/embeddings"
       }
     },
@@ -60,6 +65,7 @@
       "model": "phi4-reasoning:14b",
       "url": {
         "generate": "http://localhost:11434/api/generate",
+        "chat": "http://localhost:11434/api/chat",
         "embed": "http://localhost:11434/api/embeddings"
       }
     },

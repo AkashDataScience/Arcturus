@@ -44,7 +44,8 @@ NEXUS_BASE_URL = "http://localhost:8000/api"
 
 # ── Tunable parameters ──────────────────────────────────────────
 SILENCE_THRESHOLD_SEC = 2.0    # seconds of silence → user is done
-FOLLOW_UP_WINDOW_SEC  = 30.0   # seconds to stay listening after TTS
+FOLLOW_UP_WINDOW_SEC  = 15.0   # seconds to stay listening after TTS, then go IDLE
+MAX_LISTEN_IDLE_SEC   = 60.0   # if no utterance after this long in LISTENING, go IDLE
 RUN_TIMEOUT_SEC       = 300.0  # 5 min — enough for multi-step runs
 PROGRESS_PING_SEC     = 45.0   # speak a reassurance if still waiting after N sec
 # ────────────────────────────────────────────────────────────────
@@ -62,6 +63,7 @@ class Orchestrator:
         self.state = "IDLE"
         self._lock = threading.Lock()
         self._follow_up_timer = None
+        self._max_listen_timer: threading.Timer | None = None
 
         # Utterance accumulation state
         self._utterance_buffer: list[str] = []
@@ -118,7 +120,8 @@ class Orchestrator:
         threading.Thread(target=_stop, daemon=True).start()
 
     # ─────────────── Wake ───────────────
-    def on_wake(self, event):
+    def on_wake(self, event=None):
+        event = event or {}
         is_barge_in = event.get("type") == "BARGE_IN"
 
         with self._lock:
@@ -139,23 +142,31 @@ class Orchestrator:
 
             self._cancel_follow_up()
             self._cancel_silence_timer()
+            self._cancel_max_listen_timer()
             self._utterance_buffer.clear()
             self._set_state("LISTENING")
+
+        # Start max listen timeout: if no utterance after N seconds, go IDLE so we don't stay "Listening" forever
+        self._start_max_listen_timer()
 
         # Signal nexus polling loop to unblock instantly (no 500ms wait)
         self._barge_in_event.set()
 
-        # Cancel TTS immediately
-        self.tts.cancel()
+        # Cancel TTS immediately (if available)
+        if self.tts:
+            self.tts.cancel()
 
         # ── STT handling ──────────────────────────────────────────────────
-        # For a normal wake-word: clear STT buffer (drop stale audio).
-        # For a BARGE_IN: do NOT cancel STT — voice_wake_service already
+        # For a normal wake-word: close previous listen session (if any) and
+        # start a fresh STT session so the mic stream is clean for this turn.
+        # For a BARGE_IN: do NOT cancel/restart STT — voice_wake_service already
         # pre-filled buffered speech frames and we must not wipe them.
-        if not is_barge_in:
-            self.stt.cancel()   # fresh wake — drop any stale buffer
-        else:
-            print("🎙️ [Orchestrator] Barge-in STT: keeping pre-filled frames alive")
+        if self.stt:
+            if not is_barge_in:
+                self.stt.cancel()   # drop any stale buffer from previous session
+                self.stt.start()    # open fresh listen session (reconnect WS / restart consumer)
+            else:
+                print("🎙️ [Orchestrator] Barge-in STT: keeping pre-filled frames alive")
 
         # Stop the in-flight Nexus run so it doesn't complete silently
         self._stop_active_run_async()
@@ -312,6 +323,13 @@ class Orchestrator:
                 return
 
             print(f"🗨️ [Orchestrator] Complete utterance: \"{full_query}\"")
+
+        self._cancel_max_listen_timer()
+
+        # ── Teardown listen session: release STT stream so wake word resumes cleanly ──
+        if self.stt:
+            self.stt.stop()
+            print("🔇 [Orchestrator] Listen session closed; STT stream released.")
 
         # ── Intent Gate ────────────────────────────────────────────────
         # Classify the utterance first.  Only non-DICTATION paths set
@@ -1165,6 +1183,9 @@ class Orchestrator:
             if self.state == "LISTENING":
                 print("💤 [Orchestrator] Follow-up window expired. Going IDLE.")
                 self._set_state("IDLE")
+        self._cancel_max_listen_timer()
+        if self.stt:
+            self.stt.stop()
         # Flush the voice session log when going idle
         self.session_logger.end_session()
 
@@ -1172,6 +1193,29 @@ class Orchestrator:
         if self._follow_up_timer:
             self._follow_up_timer.cancel()
             self._follow_up_timer = None
+
+    def _cancel_max_listen_timer(self):
+        if self._max_listen_timer:
+            self._max_listen_timer.cancel()
+            self._max_listen_timer = None
+
+    def _start_max_listen_timer(self):
+        """If we're still LISTENING after MAX_LISTEN_IDLE_SEC with no utterance, go IDLE."""
+        def _on_max_listen_timeout():
+            with self._lock:
+                if self.state != "LISTENING":
+                    return
+                print("💤 [Orchestrator] Max listen time reached (no utterance). Going IDLE.")
+                self._set_state("IDLE")
+            self._max_listen_timer = None
+            if self.stt:
+                self.stt.stop()
+            self.session_logger.end_session()
+
+        self._cancel_max_listen_timer()
+        self._max_listen_timer = threading.Timer(MAX_LISTEN_IDLE_SEC, _on_max_listen_timeout)
+        self._max_listen_timer.daemon = True
+        self._max_listen_timer.start()
 
     def _cancel_silence_timer(self):
         if self._silence_timer:
@@ -1184,3 +1228,25 @@ class Orchestrator:
         self.agent.cancel()
         # Flush any open voice session on shutdown
         self.session_logger.end_session()
+
+    def force_idle(self) -> str | None:
+        """
+        Force transition to IDLE from any state. Cancels TTS, STT, timers, and
+        agent work. Use when user clicks "End session" so the mic is not stuck
+        in Speaking or Listening. Closes the STT listen session so the next
+        wake gets a clean stream.
+        """
+        self._cancel_follow_up()
+        self._cancel_silence_timer()
+        self._cancel_max_listen_timer()
+        if self.stt:
+            self.stt.stop()
+        if self.tts:
+            self.tts.cancel()
+        if self.agent:
+            self.agent.cancel()
+        with self._lock:
+            if self.state != "IDLE":
+                print("💤 [Orchestrator] Force IDLE (e.g. End session).")
+                self._set_state("IDLE")
+        return self.session_logger.end_session()

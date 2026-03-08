@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import Optional
 from pathlib import Path
 import json
+import asyncio
+import threading
 
 router = APIRouter(tags=["voice"])
 
@@ -22,10 +24,45 @@ class AddPersonaRequest(BaseModel):
 
 # ── Existing endpoint ──────────────────────────────────────────
 
+def _invoke_on_wake(orch, event: dict) -> None:
+    """Run on_wake in a way that never blocks the FastAPI event loop."""
+    callback = getattr(orch, "on_wake", None)
+    if not callable(callback):
+        return
+    # If it's a coroutine function, we're in a thread so we must run its event loop
+    try:
+        result = callback(event)
+        if asyncio.iscoroutine(result):
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(result)
+            finally:
+                loop.close()
+    except Exception as e:
+        print(f"⚠️ [Voice] on_wake error: {e}")
+
+
 @router.post("/voice/start")
 async def start_listening(request: Request):
-    orch = _orchestrator_required(request)
-    orch.on_wake(None)
+    """
+    Manually start a listen session (e.g. button click). Does NOT start the
+    wake-word detector — that runs in a persistent background thread. This
+    only invokes the orchestrator's on_wake so the pipeline enters LISTENING.
+    """
+    orch = _get_orchestrator(request)
+    if orch is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Voice pipeline not available. Wake word runs in background; ensure the pipeline started at startup.",
+        )
+    event = {"type": "VOICE_WAKE", "source": "api"}
+    # Run on_wake off the event loop so we never block (sync callback in thread)
+    thread = threading.Thread(
+        target=_invoke_on_wake,
+        args=(orch, event),
+        daemon=True,
+    )
+    thread.start()
     return {"status": "listening"}
 
 
@@ -221,13 +258,13 @@ async def get_session_detail(request: Request, session_id: str):
 @router.delete("/voice/session")
 async def clear_current_session(request: Request):
     """
-    End and flush the current voice session (useful for manual reset).
+    End the voice session and force IDLE so the mic is no longer in Speaking
+    or Listening. Flushes the session log.
     """
     orch = _get_orchestrator(request)
     if orch is None:
         return {"status": "ok", "saved_to": None}
-    logger = orch.session_logger
-    path = logger.end_session()
+    path = orch.force_idle()
     return {
         "status": "ok",
         "saved_to": path,

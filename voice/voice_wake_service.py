@@ -63,6 +63,7 @@ class VoiceWakeService:
 
     def _on_internal_wake(self):
         """Called directly by the engine thread when detection occurs"""
+        print("🎤 [Voice] Wake word detected — starting mic (LISTENING)")
         self.on_wake({
             "type": "VOICE_WAKE",
             "timestamp": datetime.now().isoformat(),

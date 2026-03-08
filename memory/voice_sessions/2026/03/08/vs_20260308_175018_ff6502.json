@@ -1,0 +1,18 @@
+{
+  "session_id": "vs_20260308_175018_ff6502",
+  "started_at": "2026-03-08T12:20:18.157545+00:00",
+  "ended_at": "2026-03-08T12:22:38.353702+00:00",
+  "total_turns": 1,
+  "turns": [
+    {
+      "turn_number": 1,
+      "timestamp": "2026-03-08T12:22:37.443438+00:00",
+      "user_transcript": "What are you moving today? What is the news?",
+      "tts_text": "❌ Analysis Failed: Agent failed after retries: Unknown agent type: AnalystAgent (Not found in Registry)",
+      "run_id": "1772972425",
+      "persona": "professional",
+      "latency_ms": 131889.4,
+      "source": "nexus-streamed"
+    }
+  ]
+}

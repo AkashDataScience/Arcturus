@@ -1,0 +1,28 @@
+{
+  "session_id": "vs_20260308_173847_b756f4",
+  "started_at": "2026-03-08T12:08:47.288040+00:00",
+  "ended_at": "2026-03-08T12:09:40.329336+00:00",
+  "total_turns": 2,
+  "turns": [
+    {
+      "turn_number": 1,
+      "timestamp": "2026-03-08T12:08:54.147036+00:00",
+      "user_transcript": "Hey, actress.",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772971731",
+      "persona": "professional",
+      "latency_ms": 2472.0,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 2,
+      "timestamp": "2026-03-08T12:09:10.326928+00:00",
+      "user_transcript": "What is the news today?",
+      "tts_text": "Completed.",
+      "run_id": "1772971747",
+      "persona": "professional",
+      "latency_ms": 2493.8,
+      "source": "nexus-streamed"
+    }
+  ]
+}

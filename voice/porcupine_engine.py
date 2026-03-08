@@ -39,6 +39,10 @@ class PorcupineWakeEngine:
         return self.porcupine.frame_length
 
     def process(self, pcm):
+        # Porcupine expects exactly frame_length int16 samples per call
+        frame_len = self.porcupine.frame_length
+        if hasattr(pcm, "__len__") and len(pcm) != frame_len:
+            return False
         detected = self.porcupine.process(pcm) >= 0
         if detected and self.on_wake_detected_cb:
             self.on_wake_detected_cb()
