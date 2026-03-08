@@ -33,6 +33,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from core.utils import log_error, log_step
+from memory.space_constants import SPACE_ID_GLOBAL
 
 # Optional Neo4j dependency
 try:
@@ -141,6 +142,7 @@ class KnowledgeGraph:
             # Unique constraints for idempotent upserts
             for q in [
                 "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.user_id IS UNIQUE",
+                "CREATE CONSTRAINT space_id IF NOT EXISTS FOR (sp:Space) REQUIRE sp.space_id IS UNIQUE",
                 "CREATE CONSTRAINT memory_id IF NOT EXISTS FOR (m:Memory) REQUIRE m.id IS UNIQUE",
                 "CREATE CONSTRAINT session_id IF NOT EXISTS FOR (s:Session) REQUIRE s.session_id IS UNIQUE",
                 "CREATE CONSTRAINT entity_key IF NOT EXISTS FOR (e:Entity) REQUIRE e.composite_key IS UNIQUE",
@@ -213,6 +215,53 @@ class KnowledgeGraph:
         )
         return session_id
 
+    def create_space(
+        self,
+        user_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> str:
+        """
+        Create a Space node for a user. Returns system-generated space_id (UUID).
+        Spaces are first-class; must be created explicitly (no implicit creation).
+        Creates (User)-[:OWNS_SPACE]->(Space).
+        """
+        if not self._enabled or not user_id:
+            return ""
+        space_id = str(uuid.uuid4())
+        self.get_or_create_user(user_id)
+        self._run_write(
+            """
+            MATCH (u:User {user_id: $user_id})
+            CREATE (sp:Space {space_id: $space_id, name: $name, description: $description, created_at: datetime()})
+            CREATE (u)-[:OWNS_SPACE]->(sp)
+            """,
+            {
+                "user_id": user_id,
+                "space_id": space_id,
+                "name": (name or "").strip() or "",
+                "description": (description or "").strip() or "",
+            },
+        )
+        return space_id
+
+    def get_spaces_for_user(self, user_id: str) -> List[Dict[str, Any]]:
+        """List spaces owned by user. Returns [{space_id, name, description}, ...]."""
+        if not self._enabled or not user_id:
+            return []
+        records = self._run_query(
+            """
+            MATCH (u:User {user_id: $user_id})-[:OWNS_SPACE]->(sp:Space)
+            RETURN sp.space_id AS space_id, sp.name AS name, sp.description AS description
+            ORDER BY sp.created_at ASC
+            """,
+            {"user_id": user_id},
+        )
+        return [
+            {"space_id": r["space_id"], "name": r.get("name") or "", "description": r.get("description") or ""}
+            for r in records if r.get("space_id")
+        ]
+
     def create_memory(
         self,
         memory_id: str,
@@ -222,35 +271,42 @@ class KnowledgeGraph:
         source: str = "manual",
         space_id: Optional[str] = None,
     ) -> None:
-        """Create Memory node and link to User and Session. Optional space_id for future Spaces support (step 6)."""
+        """
+        Create Memory node and link to User and Session.
+        Optional space_id: when provided (and not __global__), link (Memory)-[:IN_SPACE]->(Space).
+        When None or __global__, memory is global (no IN_SPACE edge). Space must exist (create_space).
+        """
         self.get_or_create_user(user_id)
         self.get_or_create_session(session_id)
-        create_extras = ", m.space_id = $space_id" if space_id else ""
-        match_extras = ", m.space_id = $space_id" if space_id else ""
+        use_space = space_id and space_id != SPACE_ID_GLOBAL
         self._run_write(
-            f"""
-            MERGE (m:Memory {{id: $mid}})
-            ON CREATE SET
-                m.category = $category,
-                m.source = $source,
-                m.created_at = datetime(){create_extras}
-            ON MATCH SET
-                m.category = $category,
-                m.source = $source{match_extras}
+            """
+            MERGE (m:Memory {id: $mid})
+            ON CREATE SET m.category = $category, m.source = $source, m.created_at = datetime()
+            ON MATCH SET m.category = $category, m.source = $source
             WITH m
-            MATCH (u:User {{user_id: $user_id}})
+            MATCH (u:User {user_id: $user_id})
             MERGE (u)-[:HAS_MEMORY]->(m)
             WITH m
-            MATCH (s:Session {{session_id: $session_id}})
+            MATCH (s:Session {session_id: $session_id})
             MERGE (m)-[:FROM_SESSION]->(s)
-            """,
+            """
+            + (
+                """
+            WITH m
+            MATCH (sp:Space {space_id: $space_id})
+            MERGE (m)-[:IN_SPACE]->(sp)
+            """
+                if use_space
+                else ""
+            ),
             {
                 "mid": memory_id,
                 "user_id": user_id,
                 "session_id": session_id,
                 "category": category,
                 "source": source,
-                **({"space_id": space_id} if space_id else {}),
+                **({"space_id": space_id} if use_space else {}),
             },
         )
 
@@ -750,6 +806,7 @@ class KnowledgeGraph:
         session_id: str,
         category: str = "general",
         source: str = "manual",
+        space_id: Optional[str] = None,
         entities: Optional[List[Dict[str, Any]]] = None,
         entity_relationships: Optional[List[Dict[str, Any]]] = None,
         user_facts: Optional[List[Dict[str, Any]]] = None,
@@ -758,6 +815,7 @@ class KnowledgeGraph:
     ) -> Dict[str, Any]:
         """
         Full ingestion: create Memory, extract/link entities, relationships, user facts.
+        Optional space_id: link (Memory)-[:IN_SPACE]->(Space) when provided (not __global__).
         When facts/evidence_events are provided (unified extraction), also upsert Fact nodes,
         create Evidence, and derive User–Entity edges.
         Returns dict with entity_ids (for Neo4j link) and entity_labels (type, name for Qdrant payload).
@@ -765,7 +823,7 @@ class KnowledgeGraph:
         empty_result: Dict[str, Any] = {"entity_ids": [], "entity_labels": []}
         if not self._enabled:
             return empty_result
-        self.create_memory(memory_id, user_id, session_id, category, source)
+        self.create_memory(memory_id, user_id, session_id, category, source, space_id=space_id)
         entity_ids: List[str] = []
         entity_labels: List[Dict[str, str]] = []  # [{type, name}] same order as entity_ids
         entity_map: Dict[Tuple[str, str], str] = {}  # (type_normalized, canonical_name) -> entity_id
@@ -930,6 +988,7 @@ class KnowledgeGraph:
         extraction: Any,
         category: str = "derived",
         source: str = "session",
+        space_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Session pipeline: write Memory nodes, entities, relationships, facts, evidence from
@@ -949,7 +1008,7 @@ class KnowledgeGraph:
         evidence_events = getattr(extraction, "evidence_events", None) or (extraction.get("evidence_events", []) if isinstance(extraction, dict) else [])
 
         for memory_id in memory_ids:
-            self.create_memory(memory_id, user_id, session_id, category=category, source=source)
+            self.create_memory(memory_id, user_id, session_id, category=category, source=source, space_id=space_id)
         for ent in entities:
             etype = getattr(ent, "type", None) or (ent.get("type", "Concept") if isinstance(ent, dict) else "Concept")
             name = getattr(ent, "name", None) or (ent.get("name", "") if isinstance(ent, dict) else "")
@@ -1125,40 +1184,45 @@ class KnowledgeGraph:
         entity_ids: List[str],
         user_id: Optional[str] = None,
         depth: int = 1,
+        space_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Traverse graph from given entity ids. Returns related entities, memories, user context.
         Used for retrieval: Qdrant returns memory_ids → Neo4j expands with graph context.
+        Optional space_ids: filter memories to global (no IN_SPACE) or IN_SPACE to one of space_ids.
+        When None, no space filter (return all user-visible memories).
 
-        TODO: depth is not yet used; traversal is currently one hop only. When implementing
-        multi-hop expansion, use depth to limit relationship hops (e.g. variable-length path
-        in Cypher or iterative expansion up to depth).
+        TODO: depth is not yet used; traversal is currently one hop only.
         """
         if not self._enabled or not entity_ids:
             return {"entities": [], "memories": [], "user_facts": []}
-        # Traverse all entity-entity relationship types (first-class + RELATED_TO fallback)
         rel_types = "|".join(sorted(ENTITY_REL_TYPES) + ["RELATED_TO"])
         placeholders = ", ".join([f"$id{i}" for i in range(len(entity_ids))])
         params = {f"id{i}": eid for i, eid in enumerate(entity_ids)}
         params["user_id"] = user_id or ""
 
-        # IMPORTANT (multi-tenant safety):
-        # If user_id is provided, constrain returned memories to (u)-[:HAS_MEMORY]->(m).
-        # Entities are globally deduped by composite_key, so unconstrained memory expansion
-        # could leak memories across users if we don't scope by user here.
         if user_id:
             memory_match = "OPTIONAL MATCH (u:User {user_id: $user_id})-[:HAS_MEMORY]->(m:Memory)-[:CONTAINS_ENTITY]->(e)"
         else:
             memory_match = "OPTIONAL MATCH (m:Memory)-[:CONTAINS_ENTITY]->(e)"
 
-        # Deterministic ordering: sort memory ids by Memory.created_at (desc) at query time,
-        # then de-dupe in Python while preserving order.
+        space_filter = ""
+        if space_ids:
+            params["space_ids"] = space_ids
+            space_filter = """
+            OPTIONAL MATCH (m)-[:IN_SPACE]->(sp:Space)
+            WITH e, related, m, sp
+            WHERE m IS NULL OR sp IS NULL OR sp.space_id IN $space_ids
+            WITH e, related, m
+            """
+
         query = f"""
             MATCH (e:Entity)
             WHERE e.id IN [{placeholders}]
             OPTIONAL MATCH (e)-[:{rel_types}]-(other:Entity)
             WITH e, collect(DISTINCT other) AS related
             {memory_match}
+            {space_filter}
             WITH e, related, m
             ORDER BY m.created_at DESC
             WITH e, related, collect(m.id) AS memory_ids_raw
@@ -1431,24 +1495,37 @@ class KnowledgeGraph:
         self,
         user_id: str,
         names: List[str],
+        space_ids: Optional[List[str]] = None,
     ) -> List[str]:
         """
-        Fallback: find memory ids by raw name tokens (stop-word style).
-        Use resolve_entity_candidates + expand_from_entities for NER-based retrieval.
+        Fallback: find memory ids by raw name tokens.
+        Optional space_ids: filter to global or in-space memories.
         """
         if not self._enabled or not names:
             return []
         names_lower = [n.strip().lower() for n in names if n and n.strip()]
         if not names_lower:
             return []
-        records = self._run_query(
-            """
-            MATCH (u:User {user_id: $user_id})-[:HAS_MEMORY]->(m:Memory)-[:CONTAINS_ENTITY]->(e:Entity)
-            WHERE ANY(n IN $names_lower WHERE toLower(e.name) = n OR toLower(e.name) CONTAINS n)
-            RETURN DISTINCT m.id AS memory_id
-            """,
-            {"user_id": user_id, "names_lower": names_lower},
-        )
+        if space_ids:
+            records = self._run_query(
+                """
+                MATCH (u:User {user_id: $user_id})-[:HAS_MEMORY]->(m:Memory)-[:CONTAINS_ENTITY]->(e:Entity)
+                OPTIONAL MATCH (m)-[:IN_SPACE]->(sp:Space)
+                WHERE (ANY(n IN $names_lower WHERE toLower(e.name) = n OR toLower(e.name) CONTAINS n))
+                  AND (sp IS NULL OR sp.space_id IN $space_ids)
+                RETURN DISTINCT m.id AS memory_id
+                """,
+                {"user_id": user_id, "names_lower": names_lower, "space_ids": space_ids},
+            )
+        else:
+            records = self._run_query(
+                """
+                MATCH (u:User {user_id: $user_id})-[:HAS_MEMORY]->(m:Memory)-[:CONTAINS_ENTITY]->(e:Entity)
+                WHERE ANY(n IN $names_lower WHERE toLower(e.name) = n OR toLower(e.name) CONTAINS n)
+                RETURN DISTINCT m.id AS memory_id
+                """,
+                {"user_id": user_id, "names_lower": names_lower},
+            )
         return [r["memory_id"] for r in records if r.get("memory_id")]
 
 

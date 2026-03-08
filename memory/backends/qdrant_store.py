@@ -21,6 +21,7 @@ try:
         Filter,
         FieldCondition,
         MatchValue,
+        MatchAny,
     )
 except ImportError:
     raise ImportError(
@@ -31,6 +32,7 @@ from core.utils import log_step, log_error
 
 from memory.backends.base import VectorStoreProtocol
 from memory.qdrant_config import get_collection_config, get_default_collection, get_qdrant_url, get_qdrant_api_key
+from memory.space_constants import SPACE_ID_GLOBAL
 from memory.user_id import get_user_id
 
 
@@ -147,6 +149,9 @@ class QdrantVectorStore:
                 user_facts = extracted.get("user_facts")
                 facts = None
                 evidence_events = None
+            space_id_val = payload.get("space_id")
+            if space_id_val == SPACE_ID_GLOBAL:
+                space_id_val = None
             result = kg.ingest_memory(
                 memory_id=memory_id,
                 text=text,
@@ -154,6 +159,7 @@ class QdrantVectorStore:
                 session_id=session_id,
                 category=payload.get("category", "general"),
                 source=payload.get("source", "manual"),
+                space_id=space_id_val,
                 entities=entities,
                 entity_relationships=entity_relationships,
                 user_facts=user_facts,
@@ -187,6 +193,7 @@ class QdrantVectorStore:
         deduplication_threshold: float = 0.15,
         session_id: Optional[str] = None,
         skip_kg_ingest: bool = False,
+        space_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         embedding_list = embedding.tolist() if isinstance(embedding, np.ndarray) else list(embedding)
         if deduplication_threshold > 0:
@@ -219,6 +226,7 @@ class QdrantVectorStore:
             payload["session_id"] = source.replace("run_", "")
         if metadata:
             payload.update(metadata)
+        payload["space_id"] = space_id or (metadata or {}).get("space_id") or SPACE_ID_GLOBAL
 
         point = PointStruct(id=memory_id, vector=embedding_list, payload=payload)
         self.client.upsert(collection_name=self.collection_name, points=[point])
@@ -243,10 +251,16 @@ class QdrantVectorStore:
         merged_filter = self._tenant_filter(filter_metadata)
         search_filter = None
         if merged_filter:
-            conditions = [
-                FieldCondition(key=key, match=MatchValue(value=value))
-                for key, value in merged_filter.items()
-            ]
+            conditions = []
+            for key, value in merged_filter.items():
+                if key == "space_ids" and isinstance(value, list):
+                    conditions.append(
+                        FieldCondition(key="space_id", match=MatchAny(any=value))
+                    )
+                else:
+                    conditions.append(
+                        FieldCondition(key=key, match=MatchValue(value=value))
+                    )
             if conditions:
                 search_filter = Filter(must=conditions)
 

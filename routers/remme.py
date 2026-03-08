@@ -28,6 +28,12 @@ remme_extractor = get_remme_extractor()
 class AddMemoryRequest(BaseModel):
     text: str
     category: str = "general"
+    space_id: str | None = None
+
+
+class CreateSpaceRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
 
 
 class UpdateFactRequest(BaseModel):
@@ -290,10 +296,13 @@ async def cleanup_dangling_memories():
 
 @router.post("/add")
 async def add_memory(request: AddMemoryRequest):
-    """Manually add a memory. When MNEMO_ENABLED=false, auto-extract to UserModel hubs; when true, ingestion uses unified extractor (e.g. in Qdrant store)."""
+    """Manually add a memory. Optional space_id for Phase 3 Spaces. When MNEMO_ENABLED=false, auto-extract to UserModel hubs; when true, ingestion uses unified extractor."""
     try:
         emb = get_embedding(request.text, task_type="search_query")
-        memory = remme_store.add(request.text, emb, category=request.category, source="manual")
+        add_kwargs: dict = {"category": request.category, "source": "manual"}
+        if request.space_id:
+            add_kwargs["space_id"] = request.space_id
+        memory = remme_store.add(request.text, emb, **add_kwargs)
         
         # pdb.set_trace()
         from memory.mnemo_config import is_mnemo_enabled
@@ -325,6 +334,42 @@ async def delete_memory(memory_id: str):
     try:
         remme_store.delete(memory_id)
         return {"status": "success", "id": memory_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/spaces")
+async def create_space(request: CreateSpaceRequest):
+    """Create a new space for the user. Returns {space_id, name, description}. Phase 3 Spaces."""
+    try:
+        from memory.knowledge_graph import get_knowledge_graph
+        from memory.user_id import get_user_id
+        kg = get_knowledge_graph()
+        if not kg or not kg.enabled:
+            raise HTTPException(status_code=503, detail="Neo4j not enabled")
+        user_id = get_user_id()
+        space_id = kg.create_space(user_id, name=request.name, description=request.description)
+        if not space_id:
+            raise HTTPException(status_code=500, detail="Failed to create space")
+        return {"status": "success", "space_id": space_id, "name": request.name or "", "description": request.description or ""}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/spaces")
+async def list_spaces():
+    """List spaces owned by the user. Phase 3 Spaces."""
+    try:
+        from memory.knowledge_graph import get_knowledge_graph
+        from memory.user_id import get_user_id
+        kg = get_knowledge_graph()
+        if not kg or not kg.enabled:
+            return {"status": "success", "spaces": []}
+        user_id = get_user_id()
+        spaces = kg.get_spaces_for_user(user_id)
+        return {"status": "success", "spaces": spaces}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
