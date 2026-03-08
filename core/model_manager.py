@@ -1,5 +1,7 @@
 import os
+import time
 import json
+import asyncio
 import yaml
 from pathlib import Path
 from google import genai
@@ -59,7 +61,10 @@ class ModelManager:
             if role not in self.role_config.get("roles", {}):
                 raise ValueError(f"Unknown role: '{role}'. Available: {list(self.role_config.get('roles', {}).keys())}")
 
+            # Override model_name with the one defined for the role
             model_name = self.role_config["roles"][role]
+            # Verify explicit provider setting isn't conflicting?
+            # We assume role config implies the correct provider via the model definition or name.
 
         # Load settings for Ollama URL
         try:
@@ -111,6 +116,7 @@ class ModelManager:
             else:
                 self.text_model_key = self.profile["llm"]["text_generation"]
 
+            # Validate that the model exists in config
             if self.text_model_key not in self.config["models"]:
                 available_models = list(self.config["models"].keys())
                 raise ValueError(f"Model '{self.text_model_key}' not found in models.json. Available: {available_models}")
@@ -228,10 +234,12 @@ class ModelManager:
                     if img.mode in ('RGBA', 'P'):
                         img = img.convert('RGB')
 
+                    # Resize if too large (Ollama has limits)
                     MAX_DIM = 1024
                     if img.width > MAX_DIM or img.height > MAX_DIM:
                         img.thumbnail((MAX_DIM, MAX_DIM), PILImage.Resampling.LANCZOS)
 
+                    # Encode to base64
                     buf = io.BytesIO()
                     img.save(buf, format="JPEG", quality=85)
                     encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
@@ -239,7 +247,9 @@ class ModelManager:
                 except Exception as e:
                     print(f"⚠️ Failed to encode image for Ollama: {e}")
 
+
         prompt = "\n".join(text_parts)
+
 
         if images_base64:
             return await self._ollama_generate_with_images(prompt, images_base64)
@@ -265,6 +275,63 @@ class ModelManager:
                     return result["response"].strip()
         except Exception as e:
             raise RuntimeError(f"Ollama multimodal generation failed: {str(e)}")
+
+    # --- Rate Limiting Helper ---
+    _last_call = 0
+    _lock = asyncio.Lock()
+
+    async def _wait_for_rate_limit(self):
+        """Enforce ~15 RPM limit for Gemini (4s interval)"""
+        await ModelManager._wait_for_rate_limit_static()
+
+    @staticmethod
+    async def _wait_for_rate_limit_static():
+        """Class-level rate limiter usable without a ModelManager instance."""
+        async with ModelManager._lock:
+            now = time.time()
+            elapsed = now - ModelManager._last_call
+            if elapsed < 4.5: # 4.5s buffer for safety
+                sleep_time = 4.5 - elapsed
+                # print(f"[Rate Limit] Sleeping for {sleep_time:.2f}s...")
+                await asyncio.sleep(sleep_time)
+            ModelManager._last_call = time.time()
+
+
+    async def _gemini_generate(self, prompt: str) -> str:
+        await self._wait_for_rate_limit()
+        try:
+            # ✅ CORRECT: Use synchronous SDK client in thread to bypass aiohttp/DNS issues common on macOS
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.model_info["model"],
+                contents=prompt
+            )
+            return response.text.strip()
+
+        except ServerError as e:
+            # ✅ FIXED: Raise the exception instead of returning it
+            raise e
+        except Exception as e:
+            # ✅ Handle other potential errors
+            raise RuntimeError(f"Gemini generation failed: {str(e)}")
+
+    async def _gemini_generate_content(self, contents: list) -> str:
+        """Generate content with support for text and images using Gemini SDK"""
+        try:
+            # ✅ Use synchronous SDK client in thread (text + images)
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.model_info["model"],
+                contents=contents
+            )
+            return response.text.strip()
+
+        except ServerError as e:
+            # ✅ FIXED: Raise the exception instead of returning it
+            raise e
+        except Exception as e:
+            # ✅ Handle other potential errors
+            raise RuntimeError(f"Gemini content generation failed: {str(e)}")
 
     async def _ollama_generate(self, prompt: str) -> str:
         try:
