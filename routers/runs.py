@@ -301,6 +301,7 @@ async def process_run(run_id: str, query: str, source: str = "web", stream: bool
                                 added = remme_store.add(
                                     text, emb, category="derived", source=f"run_{run_id}",
                                     metadata={"session_id": run_id},
+                                    skip_kg_ingest=is_mnemo_enabled(),
                                 )
                                 if added and isinstance(added, dict) and added.get("id"):
                                     session_memory_ids.append(added["id"])
@@ -322,10 +323,18 @@ async def process_run(run_id: str, query: str, source: str = "web", stream: bool
                         kg = get_knowledge_graph()
                         if kg and kg.enabled:
                             user_id = get_user_id()
-                            kg.ingest_from_unified_extraction(
+                            kg_result = kg.ingest_from_unified_extraction(
                                 user_id, run_id, session_memory_ids, extraction,
                                 category="derived", source="session",
                             )
+                            entity_ids = kg_result.get("entity_ids", [])
+                            entity_labels = kg_result.get("entity_labels", [])
+                            if entity_ids or entity_labels:
+                                meta = {"entity_ids": entity_ids}
+                                if entity_labels:
+                                    meta["entity_labels"] = entity_labels
+                                for mid in session_memory_ids:
+                                    remme_store.update(mid, metadata=meta)
                             print(f"✅ Remme: Ingested session extraction to Neo4j ({len(session_memory_ids)} memories, facts + evidence)")
                     except Exception as e:
                         print(f"⚠️ Remme Neo4j session ingestion failed: {e}")

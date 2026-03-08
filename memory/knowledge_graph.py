@@ -930,14 +930,16 @@ class KnowledgeGraph:
         extraction: Any,
         category: str = "derived",
         source: str = "session",
-    ) -> None:
+    ) -> Dict[str, Any]:
         """
         Session pipeline: write Memory nodes, entities, relationships, facts, evidence from
         a UnifiedExtractionResult. Creates User, Session; one Memory per memory_id; entities
         and entity_relationships; upserts facts and evidence; derives User–Entity edges.
+        Returns {"entity_ids": [...], "entity_labels": [...]} for Qdrant payload update
+        (entities from full session context; all session memories share these).
         """
         if not self._enabled or not user_id or not session_id or not memory_ids:
-            return
+            return {}
         self.get_or_create_user(user_id)
         self.get_or_create_session(session_id)
         entity_map: Dict[Tuple[str, str], str] = {}
@@ -1051,6 +1053,16 @@ class KnowledgeGraph:
             )
         if facts:
             self._derive_user_entity_from_facts(user_id, facts, entity_map, source_memory_ids=memory_ids)
+
+        # Return entity_ids and entity_labels for Qdrant payload update (session-level)
+        deduped_ids = list(dict.fromkeys(entity_map.values()))
+        entity_labels = []
+        for ent in entities:
+            etype = getattr(ent, "type", None) or (ent.get("type", "Concept") if isinstance(ent, dict) else "Concept")
+            name = getattr(ent, "name", None) or (ent.get("name", "") if isinstance(ent, dict) else "")
+            if name:
+                entity_labels.append({"type": str(etype), "name": str(name)})
+        return {"entity_ids": deduped_ids, "entity_labels": entity_labels}
 
     def get_entities_for_memory(self, memory_id: str) -> List[Dict[str, Any]]:
         """Get entities linked to a memory."""

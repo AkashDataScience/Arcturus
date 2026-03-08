@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
 import numpy as np
+import pdb
 
 try:
     from qdrant_client import QdrantClient
@@ -115,6 +116,7 @@ class QdrantVectorStore:
 
     def _ingest_to_knowledge_graph(self, memory_id: str, text: str, payload: Dict[str, Any]) -> None:
         """Extract entities (and facts when Mnemo), write to Neo4j, update Qdrant payload with entity_ids."""
+        # pdb.set_trace()
         try:
             from memory.knowledge_graph import get_knowledge_graph
             from memory.mnemo_config import is_mnemo_enabled
@@ -184,6 +186,7 @@ class QdrantVectorStore:
         metadata: Optional[Dict[str, Any]] = None,
         deduplication_threshold: float = 0.15,
         session_id: Optional[str] = None,
+        skip_kg_ingest: bool = False,
     ) -> Dict[str, Any]:
         embedding_list = embedding.tolist() if isinstance(embedding, np.ndarray) else list(embedding)
         if deduplication_threshold > 0:
@@ -221,8 +224,10 @@ class QdrantVectorStore:
         self.client.upsert(collection_name=self.collection_name, points=[point])
         log_step(f"💾 Added memory: {memory_id[:8]}... ({len(text)} chars)", symbol="📝")
 
-        # Neo4j knowledge graph ingestion (if enabled)
-        self._ingest_to_knowledge_graph(memory_id, text, payload)
+        # Neo4j knowledge graph ingestion (if enabled). Skip when add comes from session pipeline;
+        # session extraction is ingested via ingest_from_unified_extraction (entities from full context).
+        if not skip_kg_ingest:
+            self._ingest_to_knowledge_graph(memory_id, text, payload)
 
         return {"id": memory_id, **payload}
 
