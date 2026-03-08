@@ -77,7 +77,7 @@ export const VoicePanel: React.FC = () => {
     <div className="flex flex-col h-full bg-background/95 text-foreground overflow-hidden">
       {/* Header */}
       <div className="shrink-0 px-4 py-3 border-b border-border/50">
-        <h2 className="text-sm font-semibold text-cyan-400 tracking-tight">Voice</h2>
+        <h2 className="text-sm font-semibold text-cyan-400 tracking-tight">Echo</h2>
         <p className="text-xs text-muted-foreground mt-0.5">Talk to Arcturus hands-free</p>
       </div>
 

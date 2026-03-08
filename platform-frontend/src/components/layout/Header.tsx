@@ -30,7 +30,7 @@ const TAB_CONFIG: Record<string, { label: string; icon: any; color: string; subt
     ide: { label: 'IDE', icon: Code2, color: 'text-neon-cyan', subtitleSuffix: '' },
     scheduler: { label: 'Scheduler', icon: CalendarClock, color: 'text-neon-cyan', subtitleSuffix: 'JOBS' },
     console: { label: 'Mission Control', icon: Terminal, color: 'text-green-400', subtitleSuffix: 'EVENTS' },
-    voice: { label: 'Voice', icon: Mic, color: 'text-cyan-400', subtitleSuffix: 'ECHO' }
+    voice: { label: 'Echo', icon: Mic, color: 'text-cyan-400', subtitleSuffix: 'VOICE' }
 };
 
 export const Header: React.FC = () => {

@@ -211,16 +211,28 @@ class ModelManager:
         """Generate with Ollama using images (for multimodal models)."""
         try:
             import aiohttp
-            url = self.model_info["url"]["chat"]
-            payload = {
-                "model": self.model_info["model"],
-                "messages": [
-                    {"role": "user", "content": prompt, "images": images}
-                ],
-                "stream": False,
-            }
+            chat_url = self.model_info["url"]["chat"]
+            generate_url = self.model_info["url"]["generate"]
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload) as response:
+                payload_chat = {
+                    "model": self.model_info["model"],
+                    "messages": [
+                        {"role": "user", "content": prompt, "images": images}
+                    ],
+                    "stream": False,
+                }
+                async with session.post(chat_url, json=payload_chat) as response:
+                    if response.status == 404:
+                        payload_gen = {
+                            "model": self.model_info["model"],
+                            "prompt": prompt,
+                            "images": images,
+                            "stream": False,
+                        }
+                        async with session.post(generate_url, json=payload_gen) as resp2:
+                            resp2.raise_for_status()
+                            result = await resp2.json()
+                            return (result.get("response") or "").strip()
                     response.raise_for_status()
                     result = await response.json()
                     return (result.get("message", {}).get("content") or "").strip()
@@ -282,14 +294,27 @@ class ModelManager:
     async def _ollama_generate(self, prompt: str) -> str:
         try:
             import aiohttp
-            url = self.model_info["url"]["chat"]
-            payload = {
-                "model": self.model_info["model"],
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-            }
+            chat_url = self.model_info["url"]["chat"]
+            generate_url = self.model_info["url"]["generate"]
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload) as response:
+                # Prefer /api/chat (newer Ollama); fallback to /api/generate (older)
+                payload_chat = {
+                    "model": self.model_info["model"],
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                }
+                async with session.post(chat_url, json=payload_chat) as response:
+                    if response.status == 404:
+                        # Older Ollama: use /api/generate
+                        payload_gen = {
+                            "model": self.model_info["model"],
+                            "prompt": prompt,
+                            "stream": False,
+                        }
+                        async with session.post(generate_url, json=payload_gen) as resp2:
+                            resp2.raise_for_status()
+                            result = await resp2.json()
+                            return (result.get("response") or "").strip()
                     response.raise_for_status()
                     result = await response.json()
                     return (result.get("message", {}).get("content") or "").strip()
