@@ -5,7 +5,6 @@ Intent Gating Layer — real-time utterance classification for voice pipelines.
 Decides—before any pipeline runs—whether a completed utterance should:
   DICTATION  – write exactly what the user said, zero inference
   COMMAND    – deterministic skill / UI navigation, no LLM planning
-  QUERY      – single-turn factual answer, no tool chaining
   AGENTIC    – multi-step reasoning, tools, memory
 
 Safety guarantee
@@ -29,8 +28,13 @@ import re
 import time
 import enum
 import threading
+import json
+import asyncio
 from dataclasses import dataclass, field
 from typing import Optional
+
+from core.model_manager import ModelManager
+from voice.config import VOICE_CONFIG
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1.  Intent Enum (non-negotiable)
@@ -39,7 +43,6 @@ from typing import Optional
 class IntentType(str, enum.Enum):
     DICTATION = "DICTATION"   # write exactly what user says, no inference
     COMMAND   = "COMMAND"     # deterministic UI / skill execution
-    QUERY     = "QUERY"       # single-turn answer, no planning, no tools
     AGENTIC   = "AGENTIC"     # multi-step reasoning, tools, memory
 
 
@@ -376,13 +379,95 @@ class IntentRouter:
 
     def __init__(self, orchestrator):
         self._orch = orchestrator
+        self.config = VOICE_CONFIG.get("intent_gate", {})
+        self.model_manager = None
+        if self.config.get("use_llm"):
+            model_name = self.config.get("model")
+            self.model_manager = ModelManager(model_name=model_name)
+
+    async def _classify_llm(self, utterance: str) -> Optional[tuple[IntentType, float, str]]:
+        """
+        Use LLM to classify the intent into COMMAND, DICTATION, or AGENTIC.
+        Returns (IntentType, confidence, reasoning) or None if it fails.
+        """
+        if not self.model_manager:
+            return None
+
+        prompt = (
+            "You are the Intent Gate for Arcturus, a voice assistant.\n"
+            "Your task is to classify the user's utterance into exactly ONE of these three categories:\n\n"
+            "1. DICTATION: The user wants to record text exactly as said. Examples: 'start dictation', 'write this down', 'take a note: ...'.\n"
+            "2. COMMAND: The user wants a direct, deterministic action or UI navigation. Examples: 'open dashboard', 'show my settings', 'go to explorer'.\n"
+            "3. AGENTIC: Everything else. This includes questions, complex requests, tool usage, or multi-step reasoning. Examples: 'how is the weather?', 'find the bug in api.py', 'summarize my emails'.\n\n"
+            f"Utterance: \"{utterance}\"\n\n"
+            "Return your decision in JSON format:\n"
+            "{\n"
+            "  \"intent\": \"DICTATION\" | \"COMMAND\" | \"AGENTIC\",\n"
+            "  \"confidence\": 0.0 to 1.0,\n"
+            "  \"reasoning\": \"brief explanation\"\n"
+            "}"
+        )
+
+        try:
+            response_text = await self.model_manager.generate_text(prompt)
+            # Basic cleanup of markdown markers
+            clean_json = response_text.replace("```json", "").replace("```", "").strip()
+            data = json.loads(clean_json)
+            
+            intent_str = data.get("intent", "AGENTIC").upper()
+            confidence = float(data.get("confidence", 0.5))
+            reasoning = data.get("reasoning", "LLM classification")
+
+            # Map to IntentType
+            if intent_str == "DICTATION":
+                return IntentType.DICTATION, confidence, reasoning
+            elif intent_str == "COMMAND":
+                return IntentType.COMMAND, confidence, reasoning
+            else:
+                return IntentType.AGENTIC, confidence, reasoning
+        except Exception as e:
+            print(f"⚠️ [IntentGate] LLM classification failed: {e}")
+            return None
 
     def route(self, utterance: str) -> GateDecision:
         """
         Classify utterance and route to the correct pipeline.
         Returns the GateDecision for logging / UI feedback.
         """
-        decision = classify(utterance)
+        # 1. Try LLM classification if enabled
+        decision = None
+        if self.model_manager:
+            try:
+                # Handle async from sync context
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop and loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._classify_llm(utterance), loop
+                    )
+                    llm_result = future.result(timeout=5.0)
+                else:
+                    llm_result = asyncio.run(self._classify_llm(utterance))
+
+                if llm_result:
+                    intent, conf, reason = llm_result
+                    decision = GateDecision(
+                        intent_type=intent,
+                        confidence=conf,
+                        should_escalate=(intent == IntentType.AGENTIC),
+                        requires_clarification=False,
+                        interruptible=(intent != IntentType.DICTATION),
+                        reasoning=f"LLM: {reason}"
+                    )
+            except Exception as e:
+                print(f"⚠️ [IntentGate] LLM classification error: {e}")
+
+        # 2. Fallback to rules if LLM disabled or failed
+        if not decision:
+            decision = classify(utterance)
 
         print(
             f"🧭 [IntentGate] \"{utterance[:60]}\" → "
