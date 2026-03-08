@@ -1,0 +1,118 @@
+{
+  "session_id": "vs_20260308_145739_f0df93",
+  "started_at": "2026-03-08T09:27:39.121087+00:00",
+  "ended_at": "2026-03-08T09:31:04.042922+00:00",
+  "total_turns": 11,
+  "turns": [
+    {
+      "turn_number": 1,
+      "timestamp": "2026-03-08T09:27:52.215319+00:00",
+      "user_transcript": "That we can get shadow.",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962068",
+      "persona": null,
+      "latency_ms": 4180.1,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 2,
+      "timestamp": "2026-03-08T09:27:59.639336+00:00",
+      "user_transcript": "Yeah. Yeah.",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962074",
+      "persona": null,
+      "latency_ms": 4935.5,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 3,
+      "timestamp": "2026-03-08T09:28:16.547751+00:00",
+      "user_transcript": "What is 1 this 1?",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962092",
+      "persona": null,
+      "latency_ms": 3600.4,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 4,
+      "timestamp": "2026-03-08T09:28:28.515784+00:00",
+      "user_transcript": "What is the answer about? I didn't hear the answer.",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962104",
+      "persona": null,
+      "latency_ms": 3922.3,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 5,
+      "timestamp": "2026-03-08T09:28:37.722879+00:00",
+      "user_transcript": "It is listening to me search and reply back. Right?",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962113",
+      "persona": null,
+      "latency_ms": 4095.8,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 6,
+      "timestamp": "2026-03-08T09:29:22.535474+00:00",
+      "user_transcript": "Are you sure",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962157",
+      "persona": null,
+      "latency_ms": 4988.6,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 7,
+      "timestamp": "2026-03-08T09:29:52.189764+00:00",
+      "user_transcript": "Uh-huh.",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962188",
+      "persona": null,
+      "latency_ms": 3342.7,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 8,
+      "timestamp": "2026-03-08T09:30:15.441672+00:00",
+      "user_transcript": "I didn't get a interest See if he's listening to me.",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962211",
+      "persona": null,
+      "latency_ms": 4046.9,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 9,
+      "timestamp": "2026-03-08T09:30:24.345020+00:00",
+      "user_transcript": "Whatever I speak, it listens. Purchase searches and give it back.",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962220",
+      "persona": null,
+      "latency_ms": 3847.4,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 10,
+      "timestamp": "2026-03-08T09:30:33.238294+00:00",
+      "user_transcript": "Instead of Google, you can use afterwards. You all",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962229",
+      "persona": null,
+      "latency_ms": 3989.1,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 11,
+      "timestamp": "2026-03-08T09:30:52.346421+00:00",
+      "user_transcript": "Because that part",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962247",
+      "persona": null,
+      "latency_ms": 4904.0,
+      "source": "nexus-streamed"
+    }
+  ]
+}

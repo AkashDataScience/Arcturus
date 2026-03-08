@@ -1,0 +1,38 @@
+{
+  "session_id": "vs_20260308_150321_d48df7",
+  "started_at": "2026-03-08T09:33:21.254521+00:00",
+  "ended_at": "2026-03-08T09:34:27.133099+00:00",
+  "total_turns": 3,
+  "turns": [
+    {
+      "turn_number": 1,
+      "timestamp": "2026-03-08T09:33:36.515466+00:00",
+      "user_transcript": "Guys",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962407",
+      "persona": null,
+      "latency_ms": 9125.0,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 2,
+      "timestamp": "2026-03-08T09:33:46.633656+00:00",
+      "user_transcript": "Nancy runs. Do you wanna sleep?",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962422",
+      "persona": null,
+      "latency_ms": 4077.3,
+      "source": "nexus-streamed"
+    },
+    {
+      "turn_number": 3,
+      "timestamp": "2026-03-08T09:33:57.127552+00:00",
+      "user_transcript": "Or not? Why? Why? Why? Why? Why? Why? Why?",
+      "tts_text": "I've completed your request.",
+      "run_id": "1772962432",
+      "persona": null,
+      "latency_ms": 4726.4,
+      "source": "nexus-streamed"
+    }
+  ]
+}
