@@ -1092,8 +1092,8 @@ app.on('ready', () => {
     Menu.setApplicationMenu(menu);
 
     // Start backends
-    startBackend('uv', ['run', 'api.py'], 'API');
-    startBackend('uv', ['run', 'python', 'mcp_servers/server_rag.py'], 'RAG');
+    startBackend('python', ['-m', 'uv', 'run', 'api.py'], 'API');
+    startBackend('python', ['-m', 'uv', 'run', 'python', 'mcp_servers/server_rag.py'], 'RAG');
 
     setupTerminalHandlers();
     setupFSHandlers();
