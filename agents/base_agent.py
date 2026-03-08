@@ -42,7 +42,7 @@ class AgentRunner:
             "total_tokens": input_tokens + output_tokens
         }
 
-    async def run_agent(self, agent_type: str, input_data: dict, image_path: Optional[str] = None, use_system2: bool = False, exclude_skills: list = None) -> dict:
+    async def run_agent(self, agent_type: str, input_data: dict, image_path: Optional[str] = None, use_system2: bool = False, exclude_skills: Optional[list] = None) -> dict:
         """Run a specific agent with input data and optional image. use_system2=True enables Reasoning Loop."""
         
         from core.registry import AgentRegistry
