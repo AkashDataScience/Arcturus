@@ -2,7 +2,7 @@ import React from 'react';
 import {
     Plus, Clock, Search, Trash2, Database, Box, PlayCircle, Brain,
     LayoutGrid, Newspaper, GraduationCap, Settings, Code2, Loader2, Notebook,
-    CalendarClock, Terminal, Zap, Wand2
+    CalendarClock, Terminal, Zap, Wand2, Upload
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
@@ -112,6 +112,18 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
     const [isOptimizing, setIsOptimizing] = React.useState(false);
     const [researchMode, setResearchMode] = React.useState<"standard" | "deep_research">("standard");
     const [focusMode, setFocusMode] = React.useState("general");
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            // @ts-ignore - Electron natively provides the full system path
+            const path = file.path;
+            if (path) {
+                setNewQuery(prev => prev + (prev ? " " : "") + `Please do deep research and analyze the content of the file at this location: ${path}`);
+            }
+        }
+    };
 
     // Reset dialog state when closed
     React.useEffect(() => {
@@ -239,6 +251,22 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
                                                     >
                                                         {isOptimizing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
                                                         {isOptimizing ? "Optimizing..." : "Optimize"}
+                                                    </Button>
+                                                    <input
+                                                        type="file"
+                                                        ref={fileInputRef}
+                                                        onChange={handleFileUpload}
+                                                        style={{ display: 'none' }}
+                                                        title="Upload file for agent to analyze"
+                                                    />
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => fileInputRef.current?.click()}
+                                                        className="h-6 text-xs text-muted-foreground hover:text-foreground hover:bg-muted px-2 gap-1"
+                                                    >
+                                                        <Upload className="w-3 h-3" />
+                                                        Upload
                                                     </Button>
                                                 </div>
                                             </div>

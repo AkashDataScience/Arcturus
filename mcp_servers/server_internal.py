@@ -118,5 +118,71 @@ async def search_past_conversations(query: str) -> str:
     except Exception as e:
         return f"[Error] Memory search failed: {str(e)}"
 
+@mcp.tool()
+async def create_space(space_name: str) -> str:
+    """
+    Create a new persistent workspace/collection for an ongoing research project.
+    """
+    spaces_file = Path(__file__).parent.parent / "data" / "spaces.json"
+    spaces_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    spaces = {}
+    if spaces_file.exists():
+        with open(spaces_file, "r", encoding="utf-8") as f:
+            spaces = json.load(f)
+            
+    if space_name in spaces:
+        return f"Space '{space_name}' already exists."
+        
+    spaces[space_name] = []
+    with open(spaces_file, "w", encoding="utf-8") as f:
+        json.dump(spaces, f, indent=2)
+        
+    return f"Created new space: '{space_name}'"
+
+@mcp.tool()
+async def add_to_space(space_name: str, item: str) -> str:
+    """
+    Add a research note, extracted URL, or piece of knowledge to a specific project space.
+    """
+    spaces_file = Path(__file__).parent.parent / "data" / "spaces.json"
+    
+    if not spaces_file.exists():
+        return f"[Error] Space '{space_name}' does not exist. Create it first."
+        
+    with open(spaces_file, "r", encoding="utf-8") as f:
+        spaces = json.load(f)
+        
+    if space_name not in spaces:
+        return f"[Error] Space '{space_name}' not found."
+        
+    spaces[space_name].append(item)
+    with open(spaces_file, "w", encoding="utf-8") as f:
+        json.dump(spaces, f, indent=2)
+        
+    return f"Successfully added item to space '{space_name}'."
+
+@mcp.tool()
+async def search_space(space_name: str) -> str:
+    """
+    Retrieve all compiled knowledge and items stored within a specific project space.
+    """
+    spaces_file = Path(__file__).parent.parent / "data" / "spaces.json"
+    
+    if not spaces_file.exists():
+        return f"[Error] No spaces found."
+        
+    with open(spaces_file, "r", encoding="utf-8") as f:
+        spaces = json.load(f)
+        
+    if space_name not in spaces:
+        return f"Space '{space_name}' is empty or does not exist."
+        
+    items = spaces[space_name]
+    if not items:
+        return f"Space '{space_name}' is currently empty."
+        
+    return f"Contents of Space '{space_name}':\n" + "\n".join(f"- {i}" for i in items)
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
