@@ -150,6 +150,7 @@ return {'search_results_1A': urls}
 - `analyze_data_file`: Only for .csv or tabular data files
 - `search_workspace_files`: When the prompt specifically asks to search local/internal workspace or code
 - `search_past_conversations`: When asked about the user's past, memory, context, or previous chats
+- `create_space`, `add_to_space`, `search_space`: When managing or saving research into persistent project collections or workspace spaces
 
 **Use `fetch_search_urls` + `webpage_url_to_raw_text` when:**
 - Need precise control over which URLs to process
@@ -448,6 +449,9 @@ Use only the following tools (in positional form):
 *   `analyze_data_file(file_path, prompt)`
 *   `search_workspace_files(query, directory)`
 *   `search_past_conversations(query)`
+*   `create_space(space_name)`
+*   `add_to_space(space_name, item)`
+*   `search_space(space_name)`
 
 ### **Deep Research Citation Preservation (CRITICAL)**
 When your agent_prompt mentions "deep research", "citations", "sources with URLs", or requests
