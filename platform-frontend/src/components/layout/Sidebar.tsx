@@ -16,7 +16,6 @@ import axios from 'axios';
 import { RagPanel } from '@/components/sidebar/RagPanel';
 import { McpPanel } from '@/components/sidebar/McpPanel';
 import { RemmePanel } from '@/components/sidebar/RemmePanel';
-import { SpacesPanel } from '@/components/sidebar/SpacesPanel';
 import { NotesPanel } from '@/components/sidebar/NotesPanel';
 import { ExplorerPanel } from '@/components/sidebar/ExplorerPanel';
 import { AppsSidebar } from '@/features/apps/components/AppsSidebar';
@@ -105,6 +104,13 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
         fetchRuns();
     }, [fetchRuns]);
 
+    // Spaces moved to header modal; redirect if persisted tab was 'spaces'
+    React.useEffect(() => {
+        if (sidebarTab === 'spaces') {
+            setSidebarTab('runs');
+        }
+    }, [sidebarTab, setSidebarTab]);
+
     const isNewRunOpen = useAppStore(state => state.isNewRunOpen);
     const setIsNewRunOpen = useAppStore(state => state.setIsNewRunOpen);
     const spaces = useAppStore(state => state.spaces);
@@ -156,7 +162,6 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
                 {/* Top Tools */}
                 <div className="flex-1 w-full px-2 space-y-2">
                     <NavIcon icon={PlayCircle} label="Runs" tab="runs" active={sidebarTab === 'runs'} onClick={() => setSidebarTab('runs')} />
-                    <NavIcon icon={FolderOpen} label="Spaces" tab="spaces" active={sidebarTab === 'spaces'} onClick={() => setSidebarTab('spaces')} />
                     <NavIcon icon={Database} label="RAG" tab="rag" active={sidebarTab === 'rag'} onClick={() => setSidebarTab('rag')} />
                     <NavIcon icon={Notebook} label="Notes" tab="notes" active={sidebarTab === 'notes'} onClick={() => setSidebarTab('notes')} />
                     <NavIcon icon={Box} label="MCP" tab="mcp" active={sidebarTab === 'mcp'} onClick={() => setSidebarTab('mcp')} />
@@ -186,7 +191,6 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
             {!hideSubPanel && (
                 <div className="flex-1 min-w-0 bg-transparent border-l border-white/10 shadow-none flex flex-col overflow-hidden relative">
                     {sidebarTab === 'settings' && <SettingsPanel />}
-                    {sidebarTab === 'spaces' && <SpacesPanel />}
                     {sidebarTab === 'runs' && (
                         <div className="flex flex-col h-full bg-transparent text-foreground">
 
@@ -281,8 +285,9 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
                                     </Dialog>
                                 </div>
                                 <button
-                                    onClick={() => setSidebarTab('spaces')}
+                                    onClick={() => useAppStore.getState().setIsSpacesModalOpen(true)}
                                     className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+                                    title="Manage Spaces"
                                 >
                                     <FolderOpen className="w-3 h-3" />
                                     Space: {currentSpaceName}

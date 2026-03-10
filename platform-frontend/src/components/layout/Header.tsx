@@ -14,6 +14,7 @@ import { api, API_BASE } from '@/lib/api';
 import { ThemeToggle, useTheme } from '@/components/theme';
 import { ArcturusLogo } from '@/components/common/ArcturusLogo';
 import { StatsModal } from '@/components/stats/StatsModal';
+import { SpacesModal } from '@/components/sidebar/SpacesModal';
 
 const TAB_CONFIG: Record<string, { label: string; icon: any; color: string; subtitleSuffix: string }> = {
     runs: { label: 'Agent Runs', icon: PlayCircle, color: 'text-neon-yellow', subtitleSuffix: 'SESSIONS' },
@@ -36,6 +37,7 @@ const TAB_CONFIG: Record<string, { label: string; icon: any; color: string; subt
 export const Header: React.FC = () => {
     const {
         currentRun, sidebarTab, runs, savedApps, memories, spaces, fetchSpaces,
+        isSpacesModalOpen, setIsSpacesModalOpen,
         analysisHistory, newsSources, ragFiles, mcpServers,
         isRagIndexing, setIsRagNewFolderOpen, fetchRagFiles,
         setIsNewRunOpen, setIsMcpAddOpen, setIsRemmeAddOpen,
@@ -272,11 +274,10 @@ export const Header: React.FC = () => {
                                 </>
                             )}
 
-                            {(sidebarTab === 'runs' || sidebarTab === 'spaces' || sidebarTab === 'apps' || sidebarTab === 'explorer' || sidebarTab === 'notes' || sidebarTab === 'skills') && (
+                            {(sidebarTab === 'runs' || sidebarTab === 'apps' || sidebarTab === 'explorer' || sidebarTab === 'notes' || sidebarTab === 'skills') && (
                                 <button
                                     onClick={() => {
                                         if (sidebarTab === 'runs') fetchRuns();
-                                        if (sidebarTab === 'spaces') fetchSpaces();
                                         if (sidebarTab === 'apps') fetchApps();
                                         if (sidebarTab === 'notes') fetchNotesFiles();
                                         if (sidebarTab === 'skills') fetchSkillsCount();
@@ -308,6 +309,16 @@ export const Header: React.FC = () => {
                     )}
 
                     <div className="h-6 w-px bg-border/50 mx-2" />
+
+                    {/* Spaces (Phase 4) — available from all panels */}
+                    <button
+                        onClick={() => setIsSpacesModalOpen(true)}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/40 border border-border/50 hover:bg-muted/60 hover:border-primary/30 transition-colors no-drag"
+                        title="Manage Spaces"
+                    >
+                        <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Spaces</span>
+                    </button>
 
                     {/* Ollama Status Indicator */}
                     <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/40 border border-border/50">
@@ -346,6 +357,9 @@ export const Header: React.FC = () => {
 
             {/* Stats Modal */}
             <StatsModal isOpen={isStatsOpen} onClose={() => setIsStatsOpen(false)} />
+
+            {/* Spaces Modal — manage spaces from any panel */}
+            <SpacesModal isOpen={isSpacesModalOpen} onClose={() => setIsSpacesModalOpen(false)} />
         </>
     );
 };

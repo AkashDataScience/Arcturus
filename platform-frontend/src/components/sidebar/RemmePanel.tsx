@@ -63,7 +63,7 @@ export const RemmePanel: React.FC = () => {
 // ============================================================================
 
 const SnippetsView: React.FC = () => {
-    const { memories, fetchMemories, addMemory, deleteMemory, cleanupDanglingMemories, isRemmeAddOpen: isAddOpen, setIsRemmeAddOpen: setIsAddOpen, spaces, currentSpaceId, fetchSpaces, setSidebarTab } = useAppStore();
+    const { memories, fetchMemories, addMemory, deleteMemory, cleanupDanglingMemories, isRemmeAddOpen: isAddOpen, setIsRemmeAddOpen: setIsAddOpen, spaces, currentSpaceId, fetchSpaces, setIsSpacesModalOpen } = useAppStore();
     const [searchQuery, setSearchQuery] = useState("");
     const [expandedMemoryId, setExpandedMemoryId] = useState<string | null>(null);
     const [newMemoryText, setNewMemoryText] = useState("");
@@ -158,8 +158,9 @@ const SnippetsView: React.FC = () => {
                 </div>
                 </div>
                 <button
-                    onClick={() => setSidebarTab('spaces')}
+                    onClick={() => setIsSpacesModalOpen(true)}
                     className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+                    title="Manage Spaces"
                 >
                     <FolderOpen className="w-3 h-3" />
                     Space: {currentSpaceName}

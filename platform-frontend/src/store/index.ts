@@ -246,6 +246,8 @@ interface SpacesSlice {
     fetchSpaces: () => Promise<void>;
     createSpace: (name: string, description?: string) => Promise<Space>;
     setCurrentSpaceId: (spaceId: string | null) => void;
+    isSpacesModalOpen: boolean;
+    setIsSpacesModalOpen: (open: boolean) => void;
 }
 
 interface AnalysisHistoryItem {
@@ -1537,6 +1539,8 @@ export const useAppStore = create<AppState>()(
                 return space;
             },
             setCurrentSpaceId: (spaceId) => set({ currentSpaceId: spaceId }),
+            isSpacesModalOpen: false,
+            setIsSpacesModalOpen: (open) => set({ isSpacesModalOpen: open }),
 
             // --- Explorer Slice ---
             explorerRootPath: null,
