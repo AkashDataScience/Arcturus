@@ -92,6 +92,7 @@ packages = [
     "canvas",
     "gateway_api",
     "storage",
+    "session",
 ]
 
 [tool.uv]
