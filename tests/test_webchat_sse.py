@@ -163,7 +163,7 @@ def test_sse_delivers_roundtrip_reply():
             "text": "hello",
         },
     )
-    assert post_resp.json()["success"] is True
+    assert post_resp.json()["ok"] is True
 
     # The reply is now in the outbox. Subscribe an SSE queue and inject via
     # send_message to simulate what happens when SSE is connected at send time.

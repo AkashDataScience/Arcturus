@@ -16,12 +16,15 @@ GET  /api/nexus/webchat/messages/{session_id}
 
 import asyncio
 import json
+import logging
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+
+_logger = logging.getLogger(__name__)
 
 from gateway.envelope import MessageEnvelope
 
@@ -53,7 +56,7 @@ class WebChatInboundRequest(BaseModel):
     sender_id: str
     sender_name: str
     text: str
-    message_id: Optional[str] = None
+    message_id: str | None = None
 
 
 class MobileInboundRequest(BaseModel):
@@ -64,7 +67,7 @@ class MobileInboundRequest(BaseModel):
     sender_name: str
     text: str
     device_type: str = "mobile"
-    message_id: Optional[str] = None
+    message_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -73,14 +76,13 @@ class MobileInboundRequest(BaseModel):
 
 
 @router.post("/webchat/inbound")
-async def webchat_inbound(req: WebChatInboundRequest):
+async def webchat_inbound(req: WebChatInboundRequest, bg: BackgroundTasks):
     """Receive a message from the WebChat widget.
 
-    Builds a ``MessageEnvelope``, runs it through the bus (agent processing +
-    formatted reply enqueued in the session outbox), and returns the bus result.
-
-    The widget should follow up with GET ``/api/nexus/webchat/messages/{session_id}``
-    to fetch the agent's reply.
+    Builds a ``MessageEnvelope`` and kicks off bus processing as a
+    background task so the HTTP 200 returns immediately.  The agent reply
+    is enqueued in the session outbox once processing completes; the widget
+    picks it up via GET ``/api/nexus/webchat/messages/{session_id}``.
     """
     envelope = MessageEnvelope.from_webchat(
         session_id=req.session_id,
@@ -89,8 +91,18 @@ async def webchat_inbound(req: WebChatInboundRequest):
         text=req.text,
         message_id=req.message_id or str(uuid.uuid4()),
     )
-    result = await _get_bus().roundtrip(envelope)
-    return result.to_dict()
+
+    async def _run_roundtrip():
+        try:
+            await _get_bus().roundtrip(envelope)
+        except Exception as exc:
+            _logger.exception(
+                "Background roundtrip failed for session %s: %s",
+                req.session_id, exc,
+            )
+
+    bg.add_task(_run_roundtrip)
+    return {"ok": True, "session_id": req.session_id, "status": "accepted"}
 
 
 @router.get("/webchat/messages/{session_id}")
@@ -133,7 +145,7 @@ async def webchat_stream(session_id: str, request: Request):
                 try:
                     msg = await asyncio.wait_for(q.get(), timeout=15.0)
                     yield {"event": "message", "data": json.dumps(msg)}
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Send a keepalive ping so the connection is not dropped by
                     # proxies / load balancers that time out idle streams.
                     yield {"event": "ping", "data": ""}
@@ -150,7 +162,7 @@ async def webchat_stream(session_id: str, request: Request):
 
 
 @router.post("/slack/events")
-async def slack_events(request: Request) -> Dict[str, Any]:
+async def slack_events(request: Request) -> dict[str, Any]:
     """Receive Slack Events API webhook.
 
     Handles two Slack event types:
@@ -209,7 +221,7 @@ async def slack_events(request: Request) -> Dict[str, Any]:
 
 
 @router.post("/discord/events")
-async def discord_events(request: Request) -> Dict[str, Any]:
+async def discord_events(request: Request) -> dict[str, Any]:
     """Receive Discord webhook events (Interactions endpoint or Gateway relay).
 
     Handles two Discord payload types:
@@ -309,7 +321,7 @@ async def discord_events(request: Request) -> Dict[str, Any]:
 
 
 @router.post("/teams/events")
-async def teams_events(request: Request) -> Dict[str, Any]:
+async def teams_events(request: Request) -> dict[str, Any]:
     """Receive an inbound Bot Framework Activity from Microsoft Teams.
 
     Microsoft Teams posts a Bot Framework Activity JSON payload when
@@ -405,7 +417,7 @@ async def teams_events(request: Request) -> Dict[str, Any]:
 
 
 @router.get("/whatsapp/inbound")
-async def whatsapp_challenge(request: Request) -> Dict[str, Any]:
+async def whatsapp_challenge(request: Request) -> dict[str, Any]:
     """WhatsApp hub.challenge handshake (GET).
 
     When the Baileys bridge (or an external system) verifies the webhook URL,
@@ -441,7 +453,7 @@ async def whatsapp_challenge(request: Request) -> Dict[str, Any]:
 
 
 @router.post("/whatsapp/inbound")
-async def whatsapp_inbound(request: Request) -> Dict[str, Any]:
+async def whatsapp_inbound(request: Request) -> dict[str, Any]:
     """Receive an inbound WhatsApp message from the Baileys bridge.
 
     The bridge POSTs a JSON payload with these fields:
@@ -508,7 +520,7 @@ async def whatsapp_inbound(request: Request) -> Dict[str, Any]:
 
 
 @router.post("/googlechat/events")
-async def googlechat_events(request: Request) -> Dict[str, Any]:
+async def googlechat_events(request: Request) -> dict[str, Any]:
     """Receive Google Chat events (space messages and bot mentions).
 
     Google Chat POSTs event objects to this endpoint when the bot receives
@@ -591,7 +603,7 @@ async def googlechat_events(request: Request) -> Dict[str, Any]:
 
 
 @router.post("/imessage/inbound")
-async def imessage_inbound(request: Request) -> Dict[str, Any]:
+async def imessage_inbound(request: Request) -> dict[str, Any]:
     """Receive an inbound iMessage from the BlueBubbles server webhook.
 
     BlueBubbles POSTs a JSON payload when a new iMessage arrives:
@@ -684,7 +696,7 @@ async def imessage_inbound(request: Request) -> Dict[str, Any]:
 
 
 @router.post("/signal/inbound")
-async def signal_inbound(request: Request) -> Dict[str, Any]:
+async def signal_inbound(request: Request) -> dict[str, Any]:
     """Receive an inbound Signal message forwarded by the signal-cli bridge.
 
     The signal_bridge/app.py sidecar polls signal-cli every 2 seconds and

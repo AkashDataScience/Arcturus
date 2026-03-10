@@ -165,6 +165,8 @@ async def process_run(
     with run_span(run_id, query or "") as span:
         try:
             # 0. SKILL MATCHING & START HOOK
+            context = None  # Initialize early for safe access in finally block
+            results = []   # Initialize early for safe access in finally block
             skill = None
             if not skill_id:
                 skill_id = skill_manager.match_intent(query)
@@ -185,7 +187,6 @@ async def process_run(
             # Orchestration: memory_retriever handles semantic recall, entity recall, graph expansion, merge
             memory_context = ""
             results = []
-            context = None  # Initialize for safe access in finally block
             try:
                 from memory.memory_retriever import retrieve
                 # Phase 3C: use space_id from request, or from existing session

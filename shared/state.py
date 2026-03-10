@@ -323,12 +323,12 @@ def get_message_bus():
         from channels.googlechat import GoogleChatAdapter
         from channels.imessage import iMessageAdapter
         from channels.matrix import MatrixAdapter
+        from channels.mobile import MobileAdapter
         from channels.signal import SignalAdapter
         from channels.slack import SlackAdapter
         from channels.teams import TeamsAdapter
         from channels.telegram import TelegramAdapter
         from channels.webchat import WebChatAdapter
-        from channels.mobile import MobileAdapter
         from channels.whatsapp import WhatsAppAdapter
         from gateway.bus import MessageBus
         from gateway.formatter import MessageFormatter

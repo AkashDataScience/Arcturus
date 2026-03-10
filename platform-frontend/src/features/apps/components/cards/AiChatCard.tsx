@@ -31,8 +31,8 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 const API_BASE = "http://localhost:8000";
-const POLL_INTERVAL_MS = 500;
-const POLL_TIMEOUT_MS = 30_000;
+const POLL_INTERVAL_MS = 1_000;
+const POLL_TIMEOUT_MS = 120_000;
 
 interface ChatMessage {
   role: "user" | "bot";
