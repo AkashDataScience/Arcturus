@@ -419,15 +419,17 @@ Use this section as the single list of what to do next; update as you complete i
 
 **Phase 5 items** (to implement when starting Phase 5):
 
-1. **UI edit (frontend)** — Build UI to edit preferences/facts. Backend ready: `PUT /remme/preferences/facts`, `UpdateFactRequest` (namespace, key, value_type, value). Adapter returns hub shape from Neo4j. UI must present canonical fields (from registry) for editing; display GET /preferences response.
+1. **Optional login / register (first)** — Full register and login experience before other Phase 5 work. **Guest:** When user is not logged in, use a generated `user_id` (ideally from frontend for future shared-backend deployment; otherwise backend-generated and cached). **Register:** On first-time registration, if the user already has a cached guest id from prior sessions, associate that id to the new account; otherwise create and associate a new user_id. **Login:** On successful login, use the user_id from the backend (DB) for that account. If the client had a different id cached (e.g. from another device or guest), migrate all associated sessions and memories from the cached id to the logged-in user_id so nothing is lost. Backend: user store, login/register endpoints, migration API (reassign memories/sessions from old user_id to new). Frontend: login/register UI, guest vs logged-in state, send user_id (or auth token that implies user_id) with requests. **Sync:** Once identity exists, Phase 4 sync endpoints can require auth (login token) and bind sync to the authenticated user_id instead of a separate optional sync secret.
 
-2. **UI edit flow (from design doc)** — On user edit: (1) upsert Fact with `source_mode=ui_edit`, `confidence=1.0`, `last_confirmed_at`; (2) create Evidence with `source_type=ui_edit`; (3) re-run derivation for User–Entity edges if edited fact implies entity relationship. Backend implements this; frontend calls the API.
+2. **UI edit (frontend)** — Build UI to edit preferences/facts. Backend ready: `PUT /remme/preferences/facts`, `UpdateFactRequest` (namespace, key, value_type, value). Adapter returns hub shape from Neo4j. UI must present canonical fields (from registry) for editing; display GET /preferences response.
 
-3. **user_id FE ownership** — See §8.7.
+3. **UI edit flow (from design doc)** — On user edit: (1) upsert Fact with `source_mode=ui_edit`, `confidence=1.0`, `last_confirmed_at`; (2) create Evidence with `source_type=ui_edit`; (3) re-run derivation for User–Entity edges if edited fact implies entity relationship. Backend implements this; frontend calls the API.
 
-4. **Lifecycle (core Phase 5)** — Importance scoring, archival, contradiction resolution. CONTRADICTS relationship reserved in schema. Implement `memory/lifecycle.py` and wire into retrieval/ingestion.
+4. **user_id FE ownership** — See §8.7. (May be partly or fully addressed by item 1.)
 
-5. **Other** — Expansion depth (multi-hop), Phase 3 retrieval scoping by space, graph explorer, spaces manager — per delivery README.
+5. **Lifecycle (core Phase 5)** — Importance scoring, archival, contradiction resolution. CONTRADICTS relationship reserved in schema. Implement `memory/lifecycle.py` and wire into retrieval/ingestion.
+
+6. **Other** — Expansion depth (multi-hop), Phase 3 retrieval scoping by space, graph explorer, spaces manager — per delivery README.
 
 ### 8.9 Future Phase (post–Phase 5) — Spaces and beyond
 
