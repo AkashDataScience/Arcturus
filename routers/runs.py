@@ -177,10 +177,14 @@ async def process_run(
                 if skill:
                     print(f"[{run_id}] 🧠 Skill Detected: {skill_id}")
                     skill_context = getattr(skill, "context", None)
-                    if skill_context is not None:
-                        skill_context.run_id = run_id
-                        skill_context.agent_id = source
-                        skill_context.config = {"source": source}
+                    if skill_context is None:
+                        from types import SimpleNamespace
+
+                        skill_context = SimpleNamespace(run_id=None, agent_id=None, config={})
+                        setattr(skill, "context", skill_context)
+                    skill_context.run_id = run_id
+                    skill_context.agent_id = source
+                    skill_context.config = {"source": source, "query": query}
                     
                     # Call On Start Hook (allows prompt modification)
                     query = await skill.on_run_start(query)
