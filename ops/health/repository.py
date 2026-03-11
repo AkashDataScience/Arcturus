@@ -9,7 +9,7 @@ percentages for SLA monitoring.
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from ops.health import HealthResult, ResourceSnapshot
+from ops.health.models import HealthResult, ResourceSnapshot
 
 Collection = Any
 
