@@ -13,6 +13,7 @@ from shared.state import (
     get_multi_mcp,
     get_remme_store,
     get_remme_extractor,
+    get_unified_extractor,
     signal_run_complete,
     push_stream_chunk,
     finish_stream,
@@ -44,6 +45,7 @@ class RunRequest(BaseModel):
     focus_mode: str = None  # "general", "academic", "news", "code", "finance", "writing"
     source: str = "web" # "web" or "voice"
     stream: bool = False # Whether the caller expects a streaming response
+    space_id: Optional[str] = None  # Phase 3C: optional space to scope session and retrieval
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -151,7 +153,14 @@ def _extract_voice_output(context) -> str:
     return "I've completed your request."
 
 
-async def process_run(run_id: str, query: str, research_mode: str = "standard", focus_mode: str = None, source: str = "web", stream: bool = False, skill_id: str = None):
+async def process_run(
+    run_id: str,
+    query: str, research_mode: str = "standard", focus_mode: str = None,
+    source: str = "web",
+    stream: bool = False,
+    skill_id: str = None,
+    space_id: Optional[str] = None,
+):
     """
     Background task: retrieve Remme memories, run agent loop, extract new memories.
     WATCHTOWER: Root span for the entire agent run.
@@ -185,9 +194,20 @@ async def process_run(run_id: str, query: str, research_mode: str = "standard", 
             context = None  # Initialize for safe access in finally block
             try:
                 from memory.memory_retriever import retrieve
+                # Phase 3C: use space_id from request, or from existing session
+                _space_id = space_id
+                if _space_id is None:
+                    try:
+                        from memory.knowledge_graph import get_knowledge_graph
+                        kg = get_knowledge_graph()
+                        if kg and kg.enabled:
+                            _space_id = kg.get_space_for_session(run_id)
+                    except Exception:
+                        pass
                 memory_context, results = retrieve(
                     query,
                     session_id=run_id,
+                    space_id=_space_id,
                 )
                 if memory_context:
                     print(f" Remme: Injected memory context into run {run_id}")
@@ -255,14 +275,7 @@ async def process_run(run_id: str, query: str, research_mode: str = "standard", 
                 history = [{"role": "assistant", "content": final_output}]
 
                 print(f" Remme: Extracting facts from run {run_id}...")
-                # Pass existing memories from earlier search to context-aware extractor
-                # ⚡ RUN IN THREAD TO AVOID BLOCKING EVENT LOOP
-                commands, preferences = await asyncio.to_thread(
-                    remme_extractor.extract,
-                    query,
-                    history,
-                    existing_memories=results
-                )
+                from memory.mnemo_config import is_mnemo_enabled
 
                 def _resolve_memory_id(alias_or_id: str, existing: list) -> Optional[str]:
                     """Resolve T001-style alias (or slug_T002) to real Qdrant point ID; pass-through UUIDs/integers."""
@@ -270,10 +283,8 @@ async def process_run(run_id: str, query: str, research_mode: str = "standard", 
                         return alias_or_id
                     import re
                     s = str(alias_or_id).strip()
-                    # Exact T001, T002, ...
                     m = re.match(r"^T(\d+)$", s, re.IGNORECASE)
                     if not m:
-                        # LLM sometimes returns slug-style id, e.g. jons_office_location_T002
                         m = re.search(r"T(\d+)$", s, re.IGNORECASE)
                     if m:
                         idx = int(m.group(1)) - 1
@@ -281,6 +292,23 @@ async def process_run(run_id: str, query: str, research_mode: str = "standard", 
                             return existing[idx]["id"]
                     return alias_or_id
 
+                extraction = None
+                if is_mnemo_enabled():
+                    unified = get_unified_extractor()
+                    extraction = await asyncio.to_thread(
+                        unified.extract_from_session, query, history, existing_memories=results
+                    )
+                    commands = [{"action": m.action, "text": m.text, "id": m.id} for m in extraction.memories]
+                    preferences = None  # do not write to hubs; step 3 ingests facts to Neo4j
+                else:
+                    commands, preferences = await asyncio.to_thread(
+                        remme_extractor.extract,
+                        query,
+                        history,
+                        existing_memories=results,
+                    )
+
+                session_memory_ids = []
                 if commands:
                     for cmd in commands:
                         if not isinstance(cmd, dict):
@@ -295,10 +323,17 @@ async def process_run(run_id: str, query: str, research_mode: str = "standard", 
                         try:
                             if action == "add" and text:
                                 emb = get_embedding(text, task_type="search_document")
-                                remme_store.add(
+                                meta = {"session_id": run_id}
+                                if space_id:
+                                    meta["space_id"] = space_id
+                                added = remme_store.add(
                                     text, emb, category="derived", source=f"run_{run_id}",
-                                    metadata={"session_id": run_id},
+                                    metadata=meta,
+                                    space_id=space_id,
+                                    skip_kg_ingest=is_mnemo_enabled(),
                                 )
+                                if added and isinstance(added, dict) and added.get("id"):
+                                    session_memory_ids.append(added["id"])
                                 print(f"✅ Remme: Added new fact: {text}")
                             elif action == "update" and target_id and text:
                                 emb = get_embedding(text, task_type="search_document")
@@ -310,12 +345,36 @@ async def process_run(run_id: str, query: str, research_mode: str = "standard", 
                         except Exception as e:
                             print(f"❌ Remme Action Failed: {e}")
 
-                # Apply preferences to hubs
-                if preferences:
+                if is_mnemo_enabled() and extraction and session_memory_ids:
+                    try:
+                        from memory.knowledge_graph import get_knowledge_graph
+                        from memory.user_id import get_user_id
+                        kg = get_knowledge_graph()
+                        if kg and kg.enabled:
+                            user_id = get_user_id()
+                            kg_result = kg.ingest_from_unified_extraction(
+                                user_id, run_id, session_memory_ids, extraction,
+                                category="derived", source="session",
+                                space_id=space_id,
+                            )
+                            entity_ids = kg_result.get("entity_ids", [])
+                            entity_labels = kg_result.get("entity_labels", [])
+                            if entity_ids or entity_labels:
+                                meta = {"entity_ids": entity_ids}
+                                if entity_labels:
+                                    meta["entity_labels"] = entity_labels
+                                for mid in session_memory_ids:
+                                    remme_store.update(mid, metadata=meta)
+                            print(f"✅ Remme: Ingested session extraction to Neo4j ({len(session_memory_ids)} memories, facts + evidence)")
+                    except Exception as e:
+                        print(f"⚠️ Remme Neo4j session ingestion failed: {e}")
+
+                if not is_mnemo_enabled() and preferences:
                     from remme.extractor import apply_preferences_to_hubs
                     apply_preferences_to_hubs(preferences)
                     print(f"✅ Remme: Processed {len(preferences)} preference updates.")
 
+                if commands:
                     print(f"✅ Remme: Processed {len(commands)} memory updates.")
                 else:
                     print(f"ℹ️ Remme: No new facts extracted from run {run_id}.")
@@ -587,12 +646,13 @@ async def process_run(run_id: str, query: str, research_mode: str = "standard", 
 async def create_run(request: RunRequest, background_tasks: BackgroundTasks):
     run_id = str(int(datetime.now().timestamp()))
 
-    # Start background execution
+    # Start background execution (Phase 3C: pass space_id for session scoping)
     background_tasks.add_task(
         process_run, run_id, request.query,
         research_mode=request.mode,
         focus_mode=request.focus_mode,
-        source=request.source, stream=request.stream)
+        source=request.source, stream=request.stream, skill_id=None, space_id=request.space_id
+    )
 
     return {
         "id": run_id,
