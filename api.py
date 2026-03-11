@@ -220,6 +220,8 @@ from routers import mcp as mcp_router
 app.include_router(runs_router.router, prefix="/api")
 app.include_router(rag_router.router, prefix="/api")
 app.include_router(remme_router.router, prefix="/api")
+from routers import sync as sync_router
+app.include_router(sync_router.router, prefix="/api")
 app.include_router(apps_router.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(explorer_router.router, prefix="/api")

@@ -32,7 +32,7 @@ Update **§2 Status at a glance** and **§8 Remaining / next steps** as work pro
 | **Neo4j Fact space_id (global sentinel)** | ✅ Done | `SPACE_ID_GLOBAL` instead of null; upsert_fact, merge_list_fact, create_evidence, get_facts_for_user |
 | **Session-level extraction** | ⏳ Deferred | One pass for memories + preferences + entities from session; see §8.2 |
 | **Retrieval scoping by space** | ⏳ Future | List/filter done; full retrieval scoping deferred; see §8.4 |
-| **Phase 4: Sync Engine** | ⏳ Deferred | Cross-device sync (CRDT-based); see §8.5 |
+| **Phase 4: Sync Engine** | ✅ Core done | CRDT-based sync (LWW), push/pull API, selective sync; see §8.5 |
 | **Phase 5: Lifecycle Manager** | ⏳ Deferred | Importance, archival, contradiction resolution; UI edit frontend; user_id FE; see §8.8 |
 | **UI edit (frontend + backend)** | ⏳ Phase 5 | Backend ready; frontend deferred |
 | **Entity-friendly Qdrant payload** | ⏳ Optional | §8.1 — beyond `entity_ids` + optional `entity_labels` |
@@ -364,18 +364,32 @@ Use this section as the single list of what to do next; update as you complete i
   - **Option B:** Add `space_id` to Qdrant payload and filter vector search; constrain Neo4j paths similarly.
 - **Where to add the hook:** In `memory/knowledge_graph.py`, reads that traverse memories (e.g. `expand_from_entities`, `get_memory_ids_for_entity_names`) should accept optional `space_id`/`space_ids` and constrain to memories in that space. `memory_retriever.retrieve()` would accept optional `space_id` and pass through to Qdrant filter and Neo4j.
 
-### 8.5 Phase 4: Sync Engine (goal — design done, implementation deferred)
+### 8.5 Phase 4: Sync Engine (implemented)
 
 **Original goal (from P11_EXPLANATION):** Cross-device sync so memories are available on all devices (phone, laptop, tablet).
 
-- **Sync Engine** (`memory/sync.py`): CRDT-based synchronization; conflict-free merge when the same memory is edited on different devices.
-- **Conflict resolution:** Graceful handling when local and remote diverge (e.g. last-write-wins or CRDT merge).
-- **Selective sync:** Some spaces can be local-only (never synced) for privacy.
-- **Offline:** Works offline; syncs when connected.
+- **Sync Engine** (`memory/sync/`): CRDT-style LWW merge; conflict-free replication across devices.
+- **Conflict resolution:** LWW (last-writer-wins) by (updated_at, device_id).
+- **Selective sync:** Per-space `sync_policy` (sync | local_only); global space always syncs.
+- **Offline:** Local store is source of truth; push/pull when connected.
 
-**Design:** See **CAPSTONE/project_charters/P11_PHASE4_SYNC_ENGINE_DESIGN.md** for full design (CRDT/LWW, offline-first, per-space sync policy, components, protocol, implementation order).
+**Implemented (Phase 4 core):**
 
-**Status:** Design complete; implementation not started. When moving to Phase 4, follow the design doc then implement sync protocol, merge logic, and multi-device tests.
+- **memory/sync_config.py:** `is_sync_engine_enabled()`, `get_sync_server_url()`, `get_device_id()`
+- **memory/sync/schema.py:** MemoryDelta, SpaceDelta, SyncChange, PushRequest/Response, PullRequest/Response
+- **memory/sync/policy.py:** `should_sync_space()`, filter by sync_policy
+- **memory/sync/merge.py:** LWW merge logic (`lww_wins`, `merge_memory_change`)
+- **memory/sync/change_tracker.py:** Build push payload from memories and spaces
+- **memory/sync/transport.py:** HTTP client for push/pull
+- **memory/sync/engine.py:** SyncEngine (push, pull, sync), `get_sync_engine()`
+- **routers/sync.py:** `POST /api/sync/push`, `POST /api/sync/pull`, `POST /api/sync/trigger`
+- **Qdrant payload:** `version`, `device_id`, `updated_at`, `deleted` on memories
+- **Neo4j Space:** `sync_policy`, `version`, `device_id`, `updated_at`; `create_space(sync_policy=)`, `upsert_space()`, `delete_space()`
+- **qdrant_store.sync_upsert():** Apply pulled memory with explicit id
+
+**Design:** See **CAPSTONE/project_charters/P11_PHASE4_SYNC_ENGINE_DESIGN.md**.
+
+**Env:** `SYNC_ENGINE_ENABLED=true`, `SYNC_SERVER_URL` (e.g. http://localhost:8000/api), optional `DEVICE_ID`.
 
 ### 8.6 Other known gaps (from delivery README)
 
@@ -463,6 +477,7 @@ Items deferred from Phase 3 Spaces; to consider in future phases:
 - **Phase 1:** `VECTOR_STORE_PROVIDER` (qdrant|faiss), `QDRANT_URL`, `QDRANT_API_KEY`
 - **Phase 2/3:** `NEO4J_ENABLED` (true|false), `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`
 - **P11 Mnemo unified path:** `MNEMO_ENABLED` (true|false). When true: unified extractor, Neo4j Fact/Evidence (step 3), adapter for preferences (step 4). When false: legacy RemMe extractor, normalizer, JSON hubs.
+- **Phase 4 Sync Engine:** `SYNC_ENGINE_ENABLED` (true|false), `SYNC_SERVER_URL` (e.g. http://localhost:8000/api), `DEVICE_ID` (optional; auto-generated and cached if not set).
 
 ### 9.3 Demo and migrations
 
@@ -494,6 +509,7 @@ Items deferred from Phase 3 Spaces; to consider in future phases:
 | Space constants | `memory/space_constants.py` — SPACE_ID_GLOBAL |
 | Qdrant config | `config/qdrant_config.yaml`; loader: `memory/qdrant_config.py` |
 | Spaces API (Phase 3) | `routers/remme.py` — POST/GET /remme/spaces; GET /remme/memories?space_id= |
+| Sync Engine (Phase 4) | `memory/sync/` — SyncEngine, get_sync_engine; `routers/sync.py` — /api/sync/push, pull, trigger |
 | Delivery checklist (fixed) | `CAPSTONE/project_charters/P11_DELIVERY_README.md` |
 | Setup (Qdrant, Neo4j) | `CAPSTONE/project_charters/P11_mnemo_SETUP_GUIDE.md` |
 

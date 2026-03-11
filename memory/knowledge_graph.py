@@ -33,7 +33,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from core.utils import log_error, log_step
-from memory.space_constants import SPACE_ID_GLOBAL
+from memory.space_constants import SPACE_ID_GLOBAL, SYNC_POLICY_SYNC
 
 # Optional Neo4j dependency
 try:
@@ -282,20 +282,34 @@ class KnowledgeGraph:
         user_id: str,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        sync_policy: Optional[str] = None,
     ) -> str:
         """
         Create a Space node for a user. Returns system-generated space_id (UUID).
         Spaces are first-class; must be created explicitly (no implicit creation).
         Creates (User)-[:OWNS_SPACE]->(Space).
+        Phase 4: sync_policy (sync|local_only), version, device_id, updated_at.
         """
         if not self._enabled or not user_id:
             return ""
         space_id = str(uuid.uuid4())
+        policy = (sync_policy or SYNC_POLICY_SYNC).strip() or SYNC_POLICY_SYNC
+        now_ts = datetime.now().isoformat()
+        device_id = ""
+        try:
+            from memory.sync_config import get_device_id
+            device_id = get_device_id()
+        except Exception:
+            pass
         self.get_or_create_user(user_id)
         self._run_write(
             """
             MATCH (u:User {user_id: $user_id})
-            CREATE (sp:Space {space_id: $space_id, name: $name, description: $description, created_at: datetime()})
+            CREATE (sp:Space {
+                space_id: $space_id, name: $name, description: $description,
+                sync_policy: $sync_policy, version: 1, device_id: $device_id,
+                updated_at: $updated_at, created_at: datetime()
+            })
             CREATE (u)-[:OWNS_SPACE]->(sp)
             """,
             {
@@ -303,26 +317,119 @@ class KnowledgeGraph:
                 "space_id": space_id,
                 "name": (name or "").strip() or "",
                 "description": (description or "").strip() or "",
+                "sync_policy": policy,
+                "device_id": device_id,
+                "updated_at": now_ts,
             },
         )
         return space_id
 
     def get_spaces_for_user(self, user_id: str) -> List[Dict[str, Any]]:
-        """List spaces owned by user. Returns [{space_id, name, description}, ...]."""
+        """List spaces owned by user. Returns [{space_id, name, description, sync_policy, version, ...}]."""
         if not self._enabled or not user_id:
             return []
         records = self._run_query(
             """
             MATCH (u:User {user_id: $user_id})-[:OWNS_SPACE]->(sp:Space)
-            RETURN sp.space_id AS space_id, sp.name AS name, sp.description AS description
+            RETURN sp.space_id AS space_id, sp.name AS name, sp.description AS description,
+                   sp.sync_policy AS sync_policy, sp.version AS version,
+                   sp.device_id AS device_id, sp.updated_at AS updated_at
             ORDER BY sp.created_at ASC
             """,
             {"user_id": user_id},
         )
-        return [
-            {"space_id": r["space_id"], "name": r.get("name") or "", "description": r.get("description") or ""}
-            for r in records if r.get("space_id")
-        ]
+        out = []
+        for r in records:
+            if not r.get("space_id"):
+                continue
+            rec = {
+                "space_id": r["space_id"],
+                "name": r.get("name") or "",
+                "description": r.get("description") or "",
+                "sync_policy": r.get("sync_policy") or SYNC_POLICY_SYNC,
+                "version": r.get("version") or 1,
+                "device_id": r.get("device_id") or "",
+                "updated_at": str(r.get("updated_at", "")) if r.get("updated_at") else "",
+            }
+            out.append(rec)
+        return out
+
+    def upsert_space(
+        self,
+        space_id: str,
+        user_id: Optional[str] = None,
+        name: str = "",
+        description: str = "",
+        sync_policy: str = SYNC_POLICY_SYNC,
+        version: int = 1,
+        device_id: str = "",
+        updated_at: str = "",
+    ) -> bool:
+        """
+        Phase 4 Sync: create or update Space node (for applying pulled space changes).
+        If space exists: update name, description, sync_policy, version, device_id, updated_at.
+        If not: create with user_id (required for create).
+        """
+        if not self._enabled or not space_id:
+            return False
+        now_ts = updated_at or datetime.now().isoformat()
+        exists = self._run_query(
+            "MATCH (sp:Space {space_id: $space_id}) RETURN 1 AS x LIMIT 1",
+            {"space_id": space_id},
+        )
+        if exists:
+            self._run_write(
+                """
+                MATCH (sp:Space {space_id: $space_id})
+                SET sp.name = $name, sp.description = $description,
+                    sp.sync_policy = $sync_policy, sp.version = $version,
+                    sp.device_id = $device_id, sp.updated_at = $updated_at
+                """,
+                {
+                    "space_id": space_id,
+                    "name": (name or "").strip(),
+                    "description": (description or "").strip(),
+                    "sync_policy": (sync_policy or SYNC_POLICY_SYNC).strip(),
+                    "version": version,
+                    "device_id": device_id or "",
+                    "updated_at": now_ts,
+                },
+            )
+            return True
+        if user_id:
+            self.get_or_create_user(user_id)
+            self._run_write(
+                """
+                MATCH (u:User {user_id: $user_id})
+                CREATE (sp:Space {
+                    space_id: $space_id, name: $name, description: $description,
+                    sync_policy: $sync_policy, version: $version, device_id: $device_id,
+                    updated_at: $updated_at, created_at: datetime()
+                })
+                CREATE (u)-[:OWNS_SPACE]->(sp)
+                """,
+                {
+                    "user_id": user_id,
+                    "space_id": space_id,
+                    "name": (name or "").strip(),
+                    "description": (description or "").strip(),
+                    "sync_policy": (sync_policy or SYNC_POLICY_SYNC).strip(),
+                    "version": version,
+                    "device_id": device_id or "",
+                    "updated_at": now_ts,
+                },
+            )
+            return True
+        return False
+
+    def delete_space(self, space_id: str) -> None:
+        """Phase 4 Sync: delete Space node (for pulled deleted space). DETACH DELETE."""
+        if not self._enabled or not space_id:
+            return
+        self._run_write(
+            "MATCH (sp:Space {space_id: $space_id}) DETACH DELETE sp",
+            {"space_id": space_id},
+        )
 
     def create_memory(
         self,

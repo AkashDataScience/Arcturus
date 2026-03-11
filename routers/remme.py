@@ -34,6 +34,7 @@ class AddMemoryRequest(BaseModel):
 class CreateSpaceRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+    sync_policy: str | None = None  # Phase 4: "sync" | "local_only"
 
 
 class UpdateFactRequest(BaseModel):
@@ -350,7 +351,12 @@ async def create_space(request: CreateSpaceRequest):
         if not kg or not kg.enabled:
             raise HTTPException(status_code=503, detail="Neo4j not enabled")
         user_id = get_user_id()
-        space_id = kg.create_space(user_id, name=request.name, description=request.description)
+        space_id = kg.create_space(
+            user_id,
+            name=request.name,
+            description=request.description,
+            sync_policy=request.sync_policy,
+        )
         if not space_id:
             raise HTTPException(status_code=500, detail="Failed to create space")
         return {"status": "success", "space_id": space_id, "name": request.name or "", "description": request.description or ""}
