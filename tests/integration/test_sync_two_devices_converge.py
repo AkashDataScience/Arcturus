@@ -134,11 +134,12 @@ class TestSyncTwoDevicesConverge:
         device_a = "device-a"
         device_b = "device-b"
 
-        # 1) Device A: add memory via API (server store gets it)
-        add_resp = client.post(
-            "/api/remme/add",
-            json={"text": "Integration test memory for sync converge.", "category": "general"},
-        )
+        # 1) Device A: add memory via API (server store gets it). Mock embedding so no Ollama in CI.
+        with patch("routers.remme.get_embedding", return_value=np.zeros(768, dtype=np.float32)):
+            add_resp = client.post(
+                "/api/remme/add",
+                json={"text": "Integration test memory for sync converge.", "category": "general"},
+            )
         assert add_resp.status_code == 200
         data = add_resp.json()
         memory = data.get("memory", {})
@@ -324,11 +325,12 @@ class TestSyncTwoDevicesConverge:
         from memory.user_id import get_user_id
 
         user_id = get_user_id()
-        # Add one memory and push
-        add_resp = client.post(
-            "/api/remme/add",
-            json={"text": "Reconnection idempotent test memory.", "category": "general"},
-        )
+        # Add one memory and push. Mock embedding so no Ollama in CI.
+        with patch("routers.remme.get_embedding", return_value=np.zeros(768, dtype=np.float32)):
+            add_resp = client.post(
+                "/api/remme/add",
+                json={"text": "Reconnection idempotent test memory.", "category": "general"},
+            )
         assert add_resp.status_code == 200
 
         def push_via_client(base_url: str, req: PushRequest, **kwargs):
