@@ -95,6 +95,31 @@ def _make_mock_spans_collection():
     return mock_coll
 
 
+def _make_mock_health_repo():
+    """Create a mock HealthRepository for health history/uptime endpoints."""
+    mock_repo = MagicMock()
+    mock_repo.get_history.return_value = [
+        {"timestamp": "2025-03-11T10:00:00", "service": "mongodb", "status": "ok", "latency_ms": 5.0, "details": None},
+        {"timestamp": "2025-03-11T10:00:00", "service": "qdrant", "status": "ok", "latency_ms": 3.0, "details": None},
+    ]
+    mock_repo.compute_all_uptimes.return_value = [
+        {"service": "mongodb", "hours": 24, "uptime_pct": 99.5, "total_checks": 100, "ok_checks": 99, "degraded_checks": 1, "down_checks": 0, "avg_latency_ms": 5.0},
+        {"service": "qdrant", "hours": 24, "uptime_pct": 100.0, "total_checks": 100, "ok_checks": 100, "degraded_checks": 0, "down_checks": 0, "avg_latency_ms": 3.0},
+    ]
+    return mock_repo
+
+
+def _make_mock_resource_snapshot():
+    """Create a mock ResourceSnapshot for /health/resources endpoint."""
+    mock_snap = MagicMock()
+    mock_snap.to_dict.return_value = {
+        "cpu_pct": 25.0, "mem_pct": 60.0, "disk_pct": 45.0,
+        "mem_used_mb": 8192.0, "mem_total_mb": 16384.0,
+        "disk_used_gb": 100.0, "disk_total_gb": 500.0,
+    }
+    return mock_snap
+
+
 @pytest.fixture
 def admin_client():
     """TestClient for admin API with mocked MongoDB and health."""
@@ -102,9 +127,12 @@ def admin_client():
     app.include_router(admin_router.router, prefix="/api")
 
     mock_coll = _make_mock_spans_collection()
+    mock_health_repo = _make_mock_health_repo()
+    mock_resources = _make_mock_resource_snapshot()
 
     with (
         patch.object(admin_router, "_get_spans_collection", return_value=mock_coll),
+        patch.object(admin_router, "_get_health_repo", return_value=mock_health_repo),
         patch(
             "ops.health.run_all_health_checks",
             return_value=[
@@ -114,6 +142,7 @@ def admin_client():
                 type("R", (), {"to_dict": lambda self: {"service": "mcp_gateway", "status": "ok", "latency_ms": None, "details": "1 server(s)"}})(),
             ],
         ),
+        patch("ops.health.collect_resources", return_value=mock_resources),
     ):
         with TestClient(app) as client:
             yield client

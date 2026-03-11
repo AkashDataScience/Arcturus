@@ -156,3 +156,55 @@ def test_16_admin_traces_view_returns_html(admin_client) -> None:
     assert resp.status_code == 200
     assert "text/html" in resp.headers.get("content-type", "")
     assert "Watchtower" in resp.text or "traces" in resp.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Health history, uptime, resources endpoints (P14.3)
+# ---------------------------------------------------------------------------
+
+
+def test_17_health_history_returns_snapshots(admin_client) -> None:
+    """Health history endpoint returns snapshots list with count."""
+    resp = admin_client.get("/api/admin/health/history", params={"hours": 24})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "snapshots" in data
+    assert isinstance(data["snapshots"], list)
+    assert "count" in data
+    assert "hours" in data
+    if data["snapshots"]:
+        snap = data["snapshots"][0]
+        assert "service" in snap
+        assert "status" in snap
+        assert "timestamp" in snap
+
+
+def test_18_health_uptime_returns_percentages(admin_client) -> None:
+    """Health uptime endpoint returns per-service uptime data."""
+    resp = admin_client.get("/api/admin/health/uptime", params={"hours": 24})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "uptimes" in data
+    assert isinstance(data["uptimes"], list)
+    assert "hours" in data
+    if data["uptimes"]:
+        entry = data["uptimes"][0]
+        assert "service" in entry
+        assert "uptime_pct" in entry
+        assert "total_checks" in entry
+        assert "ok_checks" in entry
+
+
+def test_19_health_resources_returns_cpu_mem_disk(admin_client) -> None:
+    """Health resources endpoint returns CPU, memory, and disk metrics."""
+    resp = admin_client.get("/api/admin/health/resources")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "resources" in data
+    res = data["resources"]
+    assert "cpu_pct" in res
+    assert "mem_pct" in res
+    assert "disk_pct" in res
+    assert isinstance(res["cpu_pct"], (int, float))
+    assert isinstance(res["mem_pct"], (int, float))
+    assert isinstance(res["disk_pct"], (int, float))

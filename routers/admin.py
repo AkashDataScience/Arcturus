@@ -101,3 +101,44 @@ async def get_health():
 
     results = run_all_health_checks()
     return {"services": [r.to_dict() for r in results]}
+
+
+def _get_health_repo():
+    """Get HealthRepository for health_checks collection."""
+    from ops.health.repository import HealthRepository
+
+    watchtower = settings.get("watchtower", {})
+    uri = watchtower.get("mongodb_uri", "mongodb://localhost:27017")
+    client = MongoClient(uri)
+    return HealthRepository(client["watchtower"]["health_checks"])
+
+
+@router.get("/health/history")
+async def get_health_history(
+    hours: int = Query(24, ge=1, le=168),
+    service: str | None = Query(None, description="Filter by service name"),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    """Historical health snapshots within a time window."""
+    repo = _get_health_repo()
+    snapshots = repo.get_history(hours=hours, service=service, limit=limit)
+    return {"snapshots": snapshots, "hours": hours, "count": len(snapshots)}
+
+
+@router.get("/health/uptime")
+async def get_health_uptime(
+    hours: int = Query(24, ge=1, le=720),
+):
+    """Per-service uptime percentages over a time window."""
+    repo = _get_health_repo()
+    uptimes = repo.compute_all_uptimes(hours=hours)
+    return {"uptimes": uptimes, "hours": hours}
+
+
+@router.get("/health/resources")
+async def get_health_resources():
+    """Latest system resource snapshot (CPU, memory, disk)."""
+    from ops.health import collect_resources
+
+    snapshot = collect_resources()
+    return {"resources": snapshot.to_dict()}

@@ -171,12 +171,14 @@ async def lifespan(app: FastAPI):
             from pymongo import MongoClient
             from ops.health.repository import HealthRepository
             from ops.health.scheduler import HealthScheduler
+            from ops.health.alerts import AlertEvaluator
 
             mongo_uri = watchtower.get("mongodb_uri", "mongodb://localhost:27017")
             health_mongo_client = MongoClient(mongo_uri)
             health_coll = health_mongo_client["watchtower"]["health_checks"]
             health_repo = HealthRepository(health_coll)
-            health_scheduler = HealthScheduler(repository=health_repo)
+            alert_evaluator = AlertEvaluator.from_config(watchtower.get("alert_rules", []))
+            health_scheduler = HealthScheduler(repository=health_repo, alert_evaluator=alert_evaluator)
             await health_scheduler.start()
             print("✅ [Watchtower] Health scheduler started")
         except Exception as e:

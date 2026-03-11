@@ -2,7 +2,8 @@
 Periodic health check scheduler.
 
 Runs health checks on a configurable interval, persists results
-to MongoDB via HealthRepository, and logs a summary each tick.
+to MongoDB via HealthRepository, evaluates alert rules, and logs
+a summary each tick.
 """
 
 import asyncio
@@ -10,6 +11,7 @@ import logging
 from typing import Any, Optional
 
 from config.settings_loader import settings
+from ops.health.alerts import AlertEvaluator
 from ops.health.checks import collect_resources, run_all_health_checks
 from ops.health.repository import HealthRepository
 
@@ -19,15 +21,17 @@ logger = logging.getLogger("watchtower.health")
 class HealthScheduler:
     """
     Asyncio background task that periodically runs all health checks,
-    persists snapshots to MongoDB, and logs results.
+    persists snapshots to MongoDB, evaluates alerts, and logs results.
     """
 
     def __init__(
         self,
         repository: HealthRepository,
+        alert_evaluator: Optional[AlertEvaluator] = None,
         interval_seconds: Optional[int] = None,
     ):
         self._repository = repository
+        self._alert_evaluator = alert_evaluator
         watchtower_cfg = settings.get("watchtower", {})
         self._interval = interval_seconds or watchtower_cfg.get(
             "health_check_interval_seconds", 60
@@ -80,6 +84,9 @@ class HealthScheduler:
             results = await asyncio.to_thread(run_all_health_checks)
             resources = await asyncio.to_thread(collect_resources)
             self._repository.save_snapshot(results, resources=resources)
+
+            if self._alert_evaluator is not None:
+                self._alert_evaluator.evaluate(results)
 
             ok = sum(1 for r in results if r.status == "ok")
             total = len(results)
