@@ -45,6 +45,7 @@ import { SchedulerDashboard } from '@/features/scheduler/components/SchedulerDas
 import { MissionControl } from '@/features/console/components/MissionControl';
 import { SkillsDashboard } from '@/features/skills/components/SkillsDashboard';
 import { ForgeDashboard } from '@/features/forge/components/ForgeDashboard';
+import { AdminDashboard } from '@/features/admin/AdminDashboard';
 
 export const AppLayout: React.FC = () => {
     // Mount useVoice at the root so wake-word events trigger the Echo tab
@@ -85,7 +86,7 @@ export const AppLayout: React.FC = () => {
 
     // Scheduler and Console take up full width, no sidebar subpanel needed
     // Echo should NOT be hidden when inspector is open, because the conversation is the primary surface.
-    const hideSidebarSubPanel = (isInspectorOpen && sidebarTab !== 'echo') || sidebarTab === 'ide' || sidebarTab === 'scheduler' || sidebarTab === 'console' || sidebarTab === 'skills' || sidebarTab === 'studio' || !isSidebarSubPanelOpen;
+    const hideSidebarSubPanel = (isInspectorOpen && sidebarTab !== 'echo') || sidebarTab === 'ide' || sidebarTab === 'scheduler' || sidebarTab === 'console' || sidebarTab === 'skills' || sidebarTab === 'studio' || sidebarTab === 'admin' || !isSidebarSubPanelOpen;
 
     const [leftWidth, setLeftWidth] = useState(400);
     const [rightWidth, setRightWidth] = useState(450); // original was 450px
@@ -246,6 +247,8 @@ export const AppLayout: React.FC = () => {
                                     <ForgeDashboard />
                                 ) : sidebarTab === 'console' ? (
                                     <MissionControl />
+                                ) : sidebarTab === 'admin' ? (
+                                    <AdminDashboard />
                                 ) : sidebarTab === 'echo' ? (
                                     <>
                                         <GraphCanvas />
