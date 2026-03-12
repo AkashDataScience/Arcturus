@@ -11,3 +11,10 @@ SPACE_ID_GLOBAL = "__global__"
 SYNC_POLICY_SYNC = "sync"  # Full sync to cloud/other devices
 SYNC_POLICY_LOCAL_ONLY = "local_only"  # Never leave device
 SYNC_POLICY_SHARED = "shared"  # Syncs like sync; can be shared with other users
+
+# Basic visibility levels for memories (Phase 5 privacy controls).
+# Currently used to express whether a memory is only for the owner, visible
+# within a shared space, or globally shareable in future expansions.
+VISIBILITY_PRIVATE = "private"
+VISIBILITY_SPACE = "space"      # visible to participants of the space (future use)
+VISIBILITY_PUBLIC = "public"    # visible across spaces / org (reserved for future)

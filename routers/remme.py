@@ -13,6 +13,7 @@ from shared.state import (
     get_remme_extractor,
     PROJECT_ROOT,
 )
+from memory.space_constants import VISIBILITY_PRIVATE, VISIBILITY_SPACE, VISIBILITY_PUBLIC
 from remme.utils import get_embedding
 from core.model_manager import ModelManager
 
@@ -29,6 +30,7 @@ class AddMemoryRequest(BaseModel):
     text: str
     category: str = "general"
     space_id: str | None = None
+    visibility: str | None = None  # Phase 5: privacy controls (e.g. "private", "space")
 
 
 class CreateSpaceRequest(BaseModel):
@@ -390,9 +392,15 @@ async def add_memory(request: AddMemoryRequest, background_tasks: BackgroundTask
             except Exception:
                 pass
         emb = get_embedding(request.text, task_type="search_query")
+        # Validate visibility if provided
+        if request.visibility is not None:
+            if request.visibility not in {VISIBILITY_PRIVATE, VISIBILITY_SPACE, VISIBILITY_PUBLIC}:
+                raise HTTPException(status_code=400, detail="Invalid visibility value")
         add_kwargs: dict = {"category": request.category, "source": "manual"}
         if request.space_id:
             add_kwargs["space_id"] = request.space_id
+        if request.visibility:
+            add_kwargs["metadata"] = {"visibility": request.visibility}
         memory = remme_store.add(request.text, emb, **add_kwargs)
 
         from memory.mnemo_config import is_mnemo_enabled

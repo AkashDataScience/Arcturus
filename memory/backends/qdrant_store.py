@@ -32,7 +32,7 @@ from core.utils import log_step, log_error
 
 from memory.backends.base import VectorStoreProtocol
 from memory.qdrant_config import get_collection_config, get_default_collection, get_qdrant_url, get_qdrant_api_key
-from memory.space_constants import SPACE_ID_GLOBAL
+from memory.space_constants import SPACE_ID_GLOBAL, VISIBILITY_PRIVATE
 from memory.user_id import get_user_id
 from memory.lifecycle import initialize_payload
 
@@ -238,6 +238,9 @@ class QdrantVectorStore:
         if metadata:
             payload.update(metadata)
         payload["space_id"] = space_id or (metadata or {}).get("space_id") or SPACE_ID_GLOBAL
+        # Default visibility is private to the owning user unless explicitly overridden.
+        if "visibility" not in payload:
+            payload["visibility"] = VISIBILITY_PRIVATE
 
         # Initialize lifecycle-related fields (importance, access_count, archived, last_accessed_at).
         initialize_payload(payload)

@@ -14,14 +14,14 @@ collections:
     distance: cosine        # cosine | euclidean | dot
     is_tenant: true                  # multi-tenant; scope by tenant field
     tenant_keyword_field: user_id    # payload field for tenant isolation (keyword index)
-    # indexed_payload_fields are used for filtered search. Include lifecycle fields we want to filter on.
-    indexed_payload_fields: [category, source, session_id, entity_labels, space_id, archived]  # space_id for Phase 3 filtering; archived for lifecycle
+    # indexed_payload_fields are used for filtered search. Include lifecycle/privacy fields we want to filter on.
+    indexed_payload_fields: [category, source, session_id, entity_labels, space_id, archived, visibility]  # space_id for Phase 3 filtering; archived/visibility for lifecycle/privacy
 
   test_memories:            # Test collection; mirrors arcturus_memories index setup
     dimension: 768
     distance: cosine
     is_tenant: false
-    indexed_payload_fields: [category, source, archived]
+    indexed_payload_fields: [category, source, archived, visibility]
 
   arcturus_rag_chunks:      # RAG document chunks + conversation history
     dimension: 768         # same embedding model as memories (nomic-embed-text)
