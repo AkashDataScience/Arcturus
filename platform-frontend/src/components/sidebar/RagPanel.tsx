@@ -184,7 +184,8 @@ export const RagPanel: React.FC = () => {
         selectedRagFile: selectedFile,
         setSelectedRagFile: setSelectedFile,
         expandedRagFolders,
-        toggleRagFolder
+        toggleRagFolder,
+        currentSpaceId,
     } = useAppStore();
 
     const [splitRatio, setSplitRatio] = useState(50);
@@ -258,7 +259,9 @@ export const RagPanel: React.FC = () => {
         if (panelMode === 'seek') {
             setSeeking(true);
             try {
-                const res = await axios.get(`${API_BASE}/rag/search`, { params: { query: innerSearch } });
+                const params: Record<string, string> = { query: innerSearch };
+                if (currentSpaceId) params.space_id = currentSpaceId;
+                const res = await axios.get(`${API_BASE}/rag/search`, { params });
                 const results = res.data?.results || [];
                 setRagSearchResults(results);
             } catch (e) {
@@ -295,9 +298,9 @@ export const RagPanel: React.FC = () => {
         startRagPolling();
 
         try {
-            const res = await axios.post(`${API_BASE}/rag/reindex`, null, {
-                params: path ? { path } : {}
-            });
+            const params: Record<string, string> = path ? { path } : {};
+            if (currentSpaceId) params.space_id = currentSpaceId;
+            const res = await axios.post(`${API_BASE}/rag/reindex`, null, { params });
 
             if (res.data.status === 'success') {
                 setIndexStatus("Done!");

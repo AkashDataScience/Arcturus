@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore } from '@/store';
-import { FolderOpen, Plus, Loader2, Laptop, User, Users, Settings2, LayoutGrid, ChevronRight } from 'lucide-react';
+import { api } from '@/lib/api';
+import { FolderOpen, Plus, Loader2, Laptop, User, Users, Settings2, LayoutGrid, ChevronRight, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -95,6 +96,12 @@ export const SpacesPanel: React.FC = () => {
     const [newDescription, setNewDescription] = useState('');
     const [isCreating, setIsCreating] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isShareOpen, setIsShareOpen] = useState(false);
+    const [shareSpaceId, setShareSpaceId] = useState<string | null>(null);
+    const [shareSpaceName, setShareSpaceName] = useState('');
+    const [shareUserIds, setShareUserIds] = useState('');
+    const [isSharing, setIsSharing] = useState(false);
+    const [shareError, setShareError] = useState<string | null>(null);
 
     const isGuest = authStatus === 'guest';
 
@@ -164,6 +171,42 @@ export const SpacesPanel: React.FC = () => {
         setCreateStep('template');
     };
 
+    const openShareModal = (e: React.MouseEvent, space: { space_id: string; name: string }) => {
+        e.stopPropagation();
+        if (isGuest) {
+            setIsAuthModalOpen(true);
+            return;
+        }
+        setShareSpaceId(space.space_id);
+        setShareSpaceName(space.name || 'Unnamed Space');
+        setShareUserIds('');
+        setShareError(null);
+        setIsShareOpen(true);
+    };
+
+    const handleShare = async () => {
+        if (!shareSpaceId) return;
+        const ids = shareUserIds
+            .split(/[\n,]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+        if (ids.length === 0) {
+            setShareError('Enter at least one user ID (comma or newline separated).');
+            return;
+        }
+        setIsSharing(true);
+        setShareError(null);
+        try {
+            const res = await api.shareSpace(shareSpaceId, ids);
+            setIsShareOpen(false);
+            fetchSpaces();
+        } catch (e: any) {
+            setShareError(e?.response?.data?.detail || e?.message || 'Failed to share');
+        } finally {
+            setIsSharing(false);
+        }
+    };
+
     return (
         <div className="flex flex-col h-full bg-transparent text-foreground">
             <div className="p-2 border-b border-border/50 bg-muted/20 flex items-center justify-between shrink-0">
@@ -194,23 +237,38 @@ export const SpacesPanel: React.FC = () => {
                     <span className="font-medium truncate">Global (all runs)</span>
                 </button>
                 {spaces.map((s) => (
-                    <button
+                    <div
                         key={s.space_id}
-                        onClick={() => setCurrentSpaceId(s.space_id)}
                         className={cn(
-                            'w-full flex flex-col gap-0.5 px-3 py-2 rounded-lg text-left transition-colors',
+                            'w-full flex items-center gap-1 px-3 py-2 rounded-lg transition-colors group',
                             currentSpaceId === s.space_id
                                 ? 'bg-primary/10 text-primary border border-primary/30'
                                 : 'hover:bg-muted/50 text-foreground'
                         )}
                     >
-                        <span className="font-medium truncate text-sm">{s.name || 'Unnamed Space'}</span>
-                        {(s.description || s.is_shared) && (
-                            <span className="text-xs text-muted-foreground truncate">
-                                {[s.description, s.is_shared ? '(Shared)' : null].filter(Boolean).join(' • ')}
-                            </span>
+                        <button
+                            onClick={() => setCurrentSpaceId(s.space_id)}
+                            className="flex-1 flex flex-col gap-0.5 text-left min-w-0"
+                        >
+                            <span className="font-medium truncate text-sm">{s.name || 'Unnamed Space'}</span>
+                            {(s.description || s.is_shared) && (
+                                <span className="text-xs text-muted-foreground truncate">
+                                    {[s.description, s.is_shared ? '(Shared)' : null].filter(Boolean).join(' • ')}
+                                </span>
+                            )}
+                        </button>
+                        {!isGuest && (
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 shrink-0 opacity-60 hover:opacity-100"
+                                onClick={(e) => openShareModal(e, s)}
+                                title="Share space"
+                            >
+                                <Share2 className="w-3.5 h-3.5" />
+                            </Button>
                         )}
-                    </button>
+                    </div>
                 ))}
                 {spaces.length === 0 && (
                     <div className="py-8 text-center text-muted-foreground text-sm">
@@ -352,6 +410,41 @@ export const SpacesPanel: React.FC = () => {
                             </DialogFooter>
                         </div>
                     )}
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={isShareOpen} onOpenChange={setIsShareOpen}>
+                <DialogContent className="bg-card border-border sm:max-w-md text-foreground">
+                    <DialogHeader>
+                        <DialogTitle className="text-foreground">Share space</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-2">
+                        <p className="text-sm text-muted-foreground">
+                            Share <strong>{shareSpaceName}</strong> with other users by their user ID.
+                        </p>
+                        <div className="space-y-2">
+                            <Label htmlFor="share-user-ids" className="text-sm text-muted-foreground">
+                                User IDs (comma or newline separated)
+                            </Label>
+                            <Textarea
+                                id="share-user-ids"
+                                placeholder="user-id-1, user-id-2"
+                                value={shareUserIds}
+                                onChange={(e) => setShareUserIds(e.target.value)}
+                                className="bg-muted border-input dark:border-muted-foreground/50 text-foreground min-h-[100px] resize-y"
+                                rows={4}
+                            />
+                        </div>
+                        {shareError && <p className="text-sm text-destructive">{shareError}</p>}
+                        <DialogFooter>
+                            <Button variant="outline" onClick={() => setIsShareOpen(false)}>
+                                Cancel
+                            </Button>
+                            <Button onClick={handleShare} disabled={isSharing}>
+                                {isSharing ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Share'}
+                            </Button>
+                        </DialogFooter>
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>

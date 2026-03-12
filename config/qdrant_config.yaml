@@ -26,8 +26,9 @@ collections:
   arcturus_rag_chunks:      # RAG document chunks + conversation history
     dimension: 768         # same embedding model as memories (nomic-embed-text)
     distance: cosine
-    is_tenant: false       # RAG can add user_id/space_id filter later
-    indexed_payload_fields: [doc, doc_type, session_id]
+    is_tenant: true                  # Phase A: multi-tenant; scope by user_id
+    tenant_keyword_field: user_id
+    indexed_payload_fields: [doc, doc_type, session_id, space_id]
 
   test_rag_chunks:         # Test collection; mirrors arcturus_rag_chunks
     dimension: 768

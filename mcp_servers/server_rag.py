@@ -531,30 +531,38 @@ CONTEXT FROM DOCUMENT:
         return f"Error: Could not reach the AI model for this document query. ({str(e)})"
 
 @mcp.tool()
-def search_stored_documents_rag(query: str, doc_path: str = None) -> list[str]:
+def search_stored_documents_rag(query: str, doc_path: str = None, user_id: str = None, space_id: str = None) -> list[str]:
     """Search stored documents using HYBRID search (BM25 + vector + entity gating).
     Returns relevant chunks with source information.
     Optionally provide doc_path to search within a specific document only.
-    """
+    Phase A: user_id and space_id for tenant/space scope."""
     global _bm25_index
     ensure_rag_ready()
-    mcp_log("SEARCH", f"Query: {query} (Doc: {doc_path})")
+    mcp_log("SEARCH", f"Query: {query} (Doc: {doc_path}, user_id: {user_id or 'all'})")
     
     try:
-        meta_path = ROOT / "faiss_index" / "metadata.json"
-        if not meta_path.exists():
+        rag_store = _get_rag_store()
+        use_qdrant = os.environ.get("RAG_VECTOR_STORE_PROVIDER", "faiss").lower() == "qdrant"
+        # Metadata: Qdrant tenant uses get_metadata(user_id); else metadata.json
+        if use_qdrant and hasattr(rag_store, "get_metadata") and user_id:
+            metadata = rag_store.get_metadata(user_id=user_id)
+        else:
+            meta_path = ROOT / "faiss_index" / "metadata.json"
+            if not meta_path.exists():
+                return ["No documents indexed yet. Run reindex_documents first."]
+            metadata = json.loads(meta_path.read_text())
+        
+        if not metadata:
             return ["No documents indexed yet. Run reindex_documents first."]
-        metadata = json.loads(meta_path.read_text())
         
         # 1. Analyze query for intent and entities
         analysis = analyze_query(query)
         mcp_log("SEARCH", f"Intent: {analysis.intent}, Entities: {analysis.entities}")
         
         # 2. Vector search (Qdrant or FAISS)
-        rag_store = _get_rag_store()
         query_vec = get_embedding(query)
         k = 50 if doc_path else 30
-        faiss_results = rag_store.search(query_vec, k=k)
+        faiss_results = rag_store.search(query_vec, k=k, user_id=user_id, space_id=space_id)
         
         # 3. BM25 keyword search (if available)
         bm25_results = []
@@ -1409,8 +1417,8 @@ def process_single_file(file: Path, doc_path_root: Path, cache_meta: dict):
         return {"status": "ERROR", "rel_path": str(file), "message": str(e)}
 
 
-def process_documents(target_path: str = None, specific_files: list[Path] = None):
-    """Process documents and create FAISS index using Parallel Processing (ThreadPoolExecutor)."""
+def process_documents(target_path: str = None, specific_files: list[Path] = None, user_id: str = None, space_id: str = None):
+    """Process documents and create FAISS/Qdrant index. Phase A: user_id, space_id for tenant/space scope."""
     mcp_log("INFO", f"Indexing documents... {'(Target: ' + target_path + ')' if target_path else ''}")
     ROOT = Path(__file__).parent.resolve()
     DOC_PATH = ROOT.parent / "data"
@@ -1517,11 +1525,12 @@ def process_documents(target_path: str = None, specific_files: list[Path] = None
 
                         # 2. Add to vector store (Qdrant or FAISS)
                         remove_doc = rel_path if rel_path in CACHE_META else None
-                        rag_store.add_chunks(
-                            entries=new_meta,
-                            embeddings=new_embs,
-                            remove_doc=remove_doc,
-                        )
+                        add_kwargs = {"entries": new_meta, "embeddings": new_embs, "remove_doc": remove_doc}
+                        if user_id is not None:
+                            add_kwargs["user_id"] = user_id
+                        if space_id is not None:
+                            add_kwargs["space_id"] = space_id
+                        rag_store.add_chunks(**add_kwargs)
 
                         # Update ledger with new format
                         from datetime import datetime
@@ -1573,11 +1582,11 @@ def process_documents(target_path: str = None, specific_files: list[Path] = None
 
 
 @mcp.tool()
-async def reindex_documents(target_path: str = None, force: bool = False) -> str:
+async def reindex_documents(target_path: str = None, force: bool = False, user_id: str = None, space_id: str = None) -> str:
     """Trigger a manual re-index of the RAG documents. 
     Optionally provide a target_path (relative to data/ folder) to index a specific file.
     If force is True, it wipes the index and performs a full fresh scan.
-    """
+    Phase A: user_id and space_id for tenant/space scope (required when using Qdrant with multi-tenant)."""
     # SIMPLIFIED: Always use the legacy process_documents with ledger updates
     # The scheduler-based approach had issues with process isolation
     
@@ -1607,9 +1616,13 @@ async def reindex_documents(target_path: str = None, force: bool = False) -> str
                     except Exception as e:
                         mcp_log("WARN", f"Failed to delete {f}: {e}")
                         
-        # Run process_documents in a separate thread 
-        # It will now update the new ledger format
-        threading.Thread(target=process_documents, args=(target_path,), daemon=True).start()
+        # Run process_documents in a separate thread
+        kwargs = {}
+        if user_id is not None:
+            kwargs["user_id"] = user_id
+        if space_id is not None:
+            kwargs["space_id"] = space_id
+        threading.Thread(target=process_documents, args=(target_path,), kwargs=kwargs, daemon=True).start()
         return f"Re-indexing started {'for ' + target_path if target_path else 'for all documents'}."
     except Exception as e:
         with INDEXING_LOCK:

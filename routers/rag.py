@@ -397,11 +397,20 @@ async def upload_rag_file(
 # === Indexing Endpoints ===
 
 @router.post("/reindex")
-async def reindex_rag_documents(path: str = None, force: bool = False):
-    """Trigger re-indexing of documents via RAG MCP tool"""
+async def reindex_rag_documents(path: str = None, force: bool = False, space_id: str = None):
+    """Trigger re-indexing of documents via RAG MCP tool. Phase A: passes user_id and space_id for tenant/space scope."""
     try:
-        # Pass the path to the tool if provided
+        user_id = None
+        try:
+            from memory.user_id import get_user_id
+            user_id = get_user_id()
+        except Exception:
+            pass
         args = {"target_path": path, "force": force}
+        if user_id:
+            args["user_id"] = user_id
+        if space_id:
+            args["space_id"] = space_id
         result = await multi_mcp.call_tool("rag", "reindex_documents", args)
         return {"status": "success", "result": result}
     except Exception as e:
@@ -460,10 +469,20 @@ def find_page_for_chunk(doc_path: str, chunk_text: str) -> int:
 
 
 @router.get("/search")
-async def rag_search(query: str):
-    """Semantic search against indexed RAG documents with page numbers"""
+async def rag_search(query: str, space_id: str = None):
+    """Semantic search against indexed RAG documents with page numbers. Phase A: space_id for space scope."""
     try:
+        user_id = None
+        try:
+            from memory.user_id import get_user_id
+            user_id = get_user_id()
+        except Exception:
+            pass
         args = {"query": query}
+        if user_id:
+            args["user_id"] = user_id
+        if space_id:
+            args["space_id"] = space_id
         result = await multi_mcp.call_tool("rag", "search_stored_documents_rag", args)
         
         # DEBUG: Log raw MCP result
@@ -838,9 +857,20 @@ async def ask_rag_document(request: Request):
         
         if not doc_id or not query:
             raise HTTPException(status_code=400, detail="Missing docId or query")
-            
+
+        user_id = None
+        try:
+            from memory.user_id import get_user_id
+            user_id = get_user_id()
+        except Exception:
+            pass
+        search_args = {"query": query, "doc_path": doc_id}
+        if user_id:
+            search_args["user_id"] = user_id
+        if body.get("space_id"):
+            search_args["space_id"] = body["space_id"]
         # 1. Get relevant context using MCP tool
-        context_results = await multi_mcp.call_tool("rag", "search_stored_documents_rag", {"query": query, "doc_path": doc_id})
+        context_results = await multi_mcp.call_tool("rag", "search_stored_documents_rag", search_args)
         # Extract text from CallToolResult if needed (search_stored_documents_rag returns list)
         context_list = []
         if hasattr(context_results, 'content'):
