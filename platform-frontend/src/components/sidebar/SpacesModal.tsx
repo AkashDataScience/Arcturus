@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore } from '@/store';
-import { FolderOpen, Plus, Loader2, Laptop, User, Users, Settings2 } from 'lucide-react';
+import { FolderOpen, Plus, Loader2, Laptop, User, Users, Settings2, LayoutGrid, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,6 +27,16 @@ const SPACE_TEMPLATES: Array<{
     { id: 'personal', sync_policy: 'sync', label: 'Personal', description: 'Syncs across your devices; private to you.', guestAllowed: false, icon: <User className="w-4 h-4 shrink-0" /> },
     { id: 'workspace', sync_policy: 'shared', label: 'Workspace', description: 'Syncs and can be shared with others.', guestAllowed: false, icon: <Users className="w-4 h-4 shrink-0" /> },
     { id: 'custom', sync_policy: 'sync', label: 'Custom', description: 'Choose sync behavior yourself.', guestAllowed: false, icon: <Settings2 className="w-4 h-4 shrink-0" /> },
+    { id: 'more_templates', sync_policy: 'sync', label: 'More Templates...', description: 'Startup Research, Home Renovation, and more.', guestAllowed: false, icon: <LayoutGrid className="w-4 h-4 shrink-0" /> },
+];
+
+const MORE_TEMPLATES: Array<{ id: string; sync_policy: SpaceSyncPolicy; label: string; description: string }> = [
+    { id: 'startup_research', sync_policy: 'shared', label: 'Startup Research', description: 'Track competitors, market insights, and pitch ideas. Share with co-founders or advisors.' },
+    { id: 'home_renovation', sync_policy: 'sync', label: 'Home Renovation', description: 'Plans, contractor notes, budget, and project timeline. Keep everything in one place.' },
+    { id: 'book_writing', sync_policy: 'sync', label: 'Book Writing', description: 'Chapters, research notes, character outlines, and revision history.' },
+    { id: 'travel_planning', sync_policy: 'sync', label: 'Travel Planning', description: 'Destinations, itineraries, bookings, and packing lists for your next trip.' },
+    { id: 'learning', sync_policy: 'sync', label: 'Learning', description: 'Courses, notes, and progress tracking. One space per skill or course.' },
+    { id: 'job_search', sync_policy: 'sync', label: 'Job Search', description: 'Applications, company research, and interview prep. Private to you.' },
 ];
 
 /** Phase 4: Spaces management modal — select or create space; Shared Space: template-based create. */
@@ -45,8 +55,8 @@ export const SpacesModal: React.FC<{
     } = useAppStore();
     const [selectedId, setSelectedId] = useState<string | null>(currentSpaceId);
     const [isCreateOpen, setIsCreateOpen] = useState(false);
-    const [createStep, setCreateStep] = useState<'template' | 'details'>('template');
-    const [selectedTemplate, setSelectedTemplate] = useState<typeof SPACE_TEMPLATES[0] | null>(null);
+    const [createStep, setCreateStep] = useState<'template' | 'more_templates' | 'details'>('template');
+    const [selectedTemplate, setSelectedTemplate] = useState<typeof SPACE_TEMPLATES[0] | typeof MORE_TEMPLATES[0] | null>(null);
     const [customSyncPolicy, setCustomSyncPolicy] = useState<SpaceSyncPolicy>('sync');
     const [newName, setNewName] = useState('');
     const [newDescription, setNewDescription] = useState('');
@@ -73,6 +83,14 @@ export const SpacesModal: React.FC<{
     };
 
     const onSelectTemplate = (t: typeof SPACE_TEMPLATES[0]) => {
+        if (t.id === 'more_templates') {
+            if (isGuest) {
+                setIsAuthModalOpen(true);
+                return;
+            }
+            setCreateStep('more_templates');
+            return;
+        }
         if (!t.guestAllowed && isGuest) {
             setIsAuthModalOpen(true);
             return;
@@ -82,9 +100,16 @@ export const SpacesModal: React.FC<{
         if (t.id === 'custom') setCustomSyncPolicy('sync');
     };
 
+    const onSelectMoreTemplate = (t: typeof MORE_TEMPLATES[0]) => {
+        setSelectedTemplate(t);
+        setNewName(t.label);
+        setNewDescription(t.description);
+        setCreateStep('details');
+    };
+
     const handleCreate = async () => {
         if (!newName.trim() || !selectedTemplate) return;
-        const sync_policy: SpaceSyncPolicy = selectedTemplate.id === 'custom' ? customSyncPolicy : selectedTemplate.sync_policy;
+        const sync_policy: SpaceSyncPolicy = selectedTemplate.id === 'custom' ? customSyncPolicy : (selectedTemplate.sync_policy as SpaceSyncPolicy);
         setIsCreating(true);
         setError(null);
         try {
@@ -158,7 +183,11 @@ export const SpacesModal: React.FC<{
             <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
                 <DialogContent className="bg-card border-border sm:max-w-md text-foreground">
                     <DialogHeader>
-                        <DialogTitle className="text-foreground">{createStep === 'template' ? 'Choose space type' : 'Name your space'}</DialogTitle>
+                        <DialogTitle className="text-foreground">
+                            {createStep === 'template' && 'Choose space type'}
+                            {createStep === 'more_templates' && 'More templates'}
+                            {createStep === 'details' && 'Name your space'}
+                        </DialogTitle>
                     </DialogHeader>
                     {createStep === 'template' && (
                         <div className="space-y-2 py-2">
@@ -184,6 +213,30 @@ export const SpacesModal: React.FC<{
                                     </button>
                                 );
                             })}
+                        </div>
+                    )}
+                    {createStep === 'more_templates' && (
+                        <div className="space-y-2 py-2">
+                            <p className="text-xs text-muted-foreground mb-3">
+                                Pick a template to pre-fill name and description. You can edit them on the next step.
+                            </p>
+                            {MORE_TEMPLATES.map((t) => (
+                                <button
+                                    key={t.id}
+                                    type="button"
+                                    onClick={() => onSelectMoreTemplate(t)}
+                                    className="w-full flex gap-3 p-3 rounded-lg border border-border text-left hover:bg-muted/50 hover:border-primary/30 transition-colors"
+                                >
+                                    <ChevronRight className="w-4 h-4 shrink-0 text-muted-foreground mt-0.5" />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="font-medium text-sm text-foreground">{t.label}</div>
+                                        <p className="text-xs text-muted-foreground mt-0.5">{t.description}</p>
+                                    </div>
+                                </button>
+                            ))}
+                            <Button variant="outline" size="sm" className="w-full mt-2" onClick={() => setCreateStep('template')}>
+                                Back
+                            </Button>
                         </div>
                     )}
                     {createStep === 'details' && selectedTemplate && (
