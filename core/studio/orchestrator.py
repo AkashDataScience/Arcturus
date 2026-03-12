@@ -95,6 +95,7 @@ class ForgeOrchestrator:
             created_at=now,
             updated_at=now,
             model=model,
+            creation_prompt=prompt.strip() or None,
             outline=outline,
             content_tree=None,
         )

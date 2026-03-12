@@ -1,10 +1,47 @@
-import React, { useRef, useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { Wand2, Loader2, CheckCircle, XCircle, Presentation, FileText, Table2, AlertCircle, Upload, Eye } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ExportButton } from '@/features/forge/components/ExportPanel';
 import { SlidePreviewModal } from '@/features/forge/components/preview/SlidePreviewModal';
+
+// === Prompt Banner ===
+
+function ArtifactPromptBanner({ prompt }: { prompt?: string }) {
+    const [expanded, setExpanded] = useState(false);
+    const [isClamped, setIsClamped] = useState(false);
+    const textRef = useRef<HTMLParagraphElement>(null);
+
+    useLayoutEffect(() => {
+        const el = textRef.current;
+        if (el && !expanded) {
+            setIsClamped(el.scrollHeight > el.clientHeight);
+        }
+    }, [prompt, expanded]);
+
+    if (!prompt) return null;
+
+    return (
+        <div className="mx-4 mt-3 p-3 rounded-lg bg-muted/30 border border-border/30">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Original Prompt</p>
+            <p
+                ref={textRef}
+                className={cn("text-sm text-foreground/80", !expanded && "line-clamp-3")}
+            >
+                {prompt}
+            </p>
+            {!expanded && isClamped && (
+                <button
+                    onClick={() => setExpanded(true)}
+                    className="text-[10px] text-primary hover:underline mt-1"
+                >
+                    Show more
+                </button>
+            )}
+        </div>
+    );
+}
 
 // === Sub-viewers ===
 
@@ -49,6 +86,8 @@ function OutlineViewer({ artifact }: { artifact: any }) {
                     <p className="text-sm text-destructive">{approveError}</p>
                 </div>
             )}
+
+            <ArtifactPromptBanner key={artifact.id} prompt={artifact.creation_prompt} />
 
             <ScrollArea className="flex-1 p-4">
                 <div className="space-y-2 max-w-3xl mx-auto">
@@ -379,6 +418,7 @@ export function StudioWorkspace() {
                         )}
                     </div>
                 </div>
+                <ArtifactPromptBanner key={artifact.id} prompt={artifact.creation_prompt} />
                 <ScrollArea className="flex-1">
                     {artifact.type === 'slides' && <SlidesViewer tree={artifact.content_tree} />}
                     {artifact.type === 'document' && <DocumentViewer tree={artifact.content_tree} />}
