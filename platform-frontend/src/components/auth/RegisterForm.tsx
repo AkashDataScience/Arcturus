@@ -1,0 +1,91 @@
+import { useState } from 'react';
+import { useAppStore } from '@/store';
+import { api } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+
+export const RegisterForm = ({ onSuccess }: { onSuccess: () => void }) => {
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [mergeData, setMergeData] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [loading, setLoading] = useState(false);
+    const { setAuthUserId } = useAppStore();
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoading(true);
+        setError(null);
+        try {
+            const currentGuestId = useAppStore.getState().authStatus === 'guest' ? useAppStore.getState().authUserId : null;
+            const payload: any = { email, password };
+
+            if (mergeData && currentGuestId && currentGuestId.startsWith('guest_')) {
+                payload.guest_id = currentGuestId;
+            }
+
+            const res = await api.post('/auth/register', payload);
+
+            if (res.data.access_token) {
+                setAuthUserId(res.data.user_id, 'logged_in', res.data.access_token);
+                onSuccess();
+            }
+        } catch (err: any) {
+            setError(err.response?.data?.detail || 'Registration failed');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+                <Label htmlFor="reg-email">Email</Label>
+                <Input
+                    id="reg-email"
+                    type="email"
+                    placeholder="name@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                />
+            </div>
+            <div className="space-y-2">
+                <Label htmlFor="reg-password">Password</Label>
+                <Input
+                    id="reg-password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                />
+            </div>
+            
+            <div className="flex items-center space-x-2 border p-3 rounded-md bg-muted/50">
+                <Checkbox
+                    id="merge-data"
+                    checked={mergeData}
+                    onCheckedChange={(checked) => setMergeData(checked as boolean)}
+                />
+                <div className="grid gap-1.5 leading-none">
+                    <label
+                        htmlFor="merge-data"
+                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                    >
+                        Merge local data
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                        Keep your current unsigned session data in your new account.
+                    </p>
+                </div>
+            </div>
+
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? 'Creating Account...' : 'Sign Up'}
+            </Button>
+        </form>
+    );
+};

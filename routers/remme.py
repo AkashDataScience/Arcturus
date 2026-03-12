@@ -355,12 +355,17 @@ async def create_space(request: CreateSpaceRequest, background_tasks: Background
     try:
         from memory.knowledge_graph import get_knowledge_graph
         from memory.user_id import get_user_id
+        
+        user_id = get_user_id()
+        
+        # Enforce Space Rules: Guests can only create local_only spaces
+        if user_id.startswith("guest_"):
+            request.sync_policy = "local_only"
+
         kg = get_knowledge_graph()
         if not kg or not kg.enabled:
             raise HTTPException(status_code=503, detail="Neo4j not enabled")
-        user_id = get_user_id()
         space_id = kg.create_space(
-            user_id,
             name=request.name,
             description=request.description,
             sync_policy=request.sync_policy,
@@ -371,7 +376,7 @@ async def create_space(request: CreateSpaceRequest, background_tasks: Background
         # Phase 4: enqueue background sync when sync engine enabled
         try:
             from memory.sync_config import is_sync_engine_enabled, get_sync_server_url
-            if is_sync_engine_enabled() and get_sync_server_url():
+            if is_sync_engine_enabled() and get_sync_server_url() and request.sync_policy != 'local_only':
                 from routers.sync import run_sync_background
                 background_tasks.add_task(run_sync_background)
         except Exception:
@@ -393,8 +398,7 @@ async def list_spaces():
         kg = get_knowledge_graph()
         if not kg or not kg.enabled:
             return {"status": "success", "spaces": []}
-        user_id = get_user_id()
-        spaces = kg.get_spaces_for_user(user_id)
+        spaces = kg.get_spaces_for_user()
         return {"status": "success", "spaces": spaces}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -59,7 +59,6 @@ class QdrantVectorStore:
         self._distance = _distance_from_str(cfg.get("distance", "cosine"))
         self._is_tenant = cfg.get("is_tenant", False)
         self._tenant_keyword_field = cfg.get("tenant_keyword_field", "user_id")
-        self._user_id = get_user_id() if self._is_tenant else None
         self.url = get_qdrant_url()
         api_key = get_qdrant_api_key()
         self.client = QdrantClient(url=self.url, api_key=api_key, timeout=10.0)
@@ -126,7 +125,7 @@ class QdrantVectorStore:
             kg = get_knowledge_graph()
             if not kg or not kg.enabled:
                 return
-            user_id = payload.get(self._tenant_keyword_field) or self._user_id
+            user_id = payload.get(self._tenant_keyword_field) or (get_user_id() if self._is_tenant else None)
             if not user_id:
                 return
             session_id = payload.get("session_id") or "unknown"
@@ -179,7 +178,8 @@ class QdrantVectorStore:
 
     def _tenant_filter(self, filter_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Merge tenant user_id into filter metadata."""
-        base: Dict[str, Any] = {self._tenant_keyword_field: self._user_id} if self._is_tenant and self._user_id else {}
+        current_user_id = get_user_id() if self._is_tenant else None
+        base: Dict[str, Any] = {self._tenant_keyword_field: current_user_id} if self._is_tenant and current_user_id else {}
         if filter_metadata:
             base.update(filter_metadata)
         return base
@@ -225,8 +225,9 @@ class QdrantVectorStore:
             payload["device_id"] = get_device_id()
         except Exception:
             payload["device_id"] = ""
-        if self._is_tenant and self._user_id:
-            payload[self._tenant_keyword_field] = self._user_id
+        current_user_id = get_user_id() if self._is_tenant else None
+        if self._is_tenant and current_user_id:
+            payload[self._tenant_keyword_field] = current_user_id
         if session_id:
             payload["session_id"] = session_id
         elif metadata and metadata.get("session_id"):
@@ -364,8 +365,9 @@ class QdrantVectorStore:
             if result:
                 p = result[0]
                 payload = dict(p.payload)
-                if self._is_tenant and self._user_id:
-                    if payload.get(self._tenant_keyword_field) != self._user_id:
+                current_user_id = get_user_id() if self._is_tenant else None
+                if self._is_tenant and current_user_id:
+                    if payload.get(self._tenant_keyword_field) != current_user_id:
                         return None
                 return {"id": str(p.id), **payload}
             return None
@@ -438,8 +440,9 @@ class QdrantVectorStore:
                 merged["updated_at"] = datetime.now().isoformat()
             if "deleted" not in merged:
                 merged["deleted"] = False
-            if self._is_tenant and self._user_id and "user_id" not in merged:
-                merged[self._tenant_keyword_field] = self._user_id
+            current_user_id = get_user_id() if self._is_tenant else None
+            if self._is_tenant and current_user_id and "user_id" not in merged:
+                merged[self._tenant_keyword_field] = current_user_id
             point = PointStruct(id=memory_id, vector=vec, payload=merged)
             self.client.upsert(collection_name=self.collection_name, points=[point])
             return True
@@ -505,7 +508,8 @@ class QdrantVectorStore:
 
     def count(self) -> int:
         try:
-            if self._is_tenant and self._user_id:
+            current_user_id = get_user_id() if self._is_tenant else None
+            if self._is_tenant and current_user_id:
                 results = self.get_all(limit=2**31 - 1)
                 return len(results)
             info = self.client.get_collection(self.collection_name)

@@ -470,11 +470,45 @@ interface StudioSlice {
     clearEditState: () => void;
 }
 
-interface AppState extends RunSlice, GraphSlice, WorkspaceSlice, ReplaySlice, SettingsSlice, RagViewerSlice, NotesSlice, IdeSlice, RemmeSlice, SpacesSlice, ExplorerSlice, AppsSlice, AgentTestSlice, NewsSlice, ChatSlice, ReviewSlice, InboxSlice, SchedulerSlice, EventBusSlice, StudioSlice { }
+interface AuthSlice {
+    authUserId: string | null;
+    authToken: string | null;
+    authStatus: 'guest' | 'logged_in';
+    setAuthUserId: (id: string | null, status: 'guest' | 'logged_in', token?: string) => void;
+    initAuth: () => void;
+    logoutAuth: () => void;
+    isAuthModalOpen: boolean;
+    setIsAuthModalOpen: (open: boolean) => void;
+}
+
+interface AppState extends RunSlice, GraphSlice, WorkspaceSlice, ReplaySlice, SettingsSlice, RagViewerSlice, NotesSlice, IdeSlice, RemmeSlice, SpacesSlice, ExplorerSlice, AppsSlice, AgentTestSlice, NewsSlice, ChatSlice, ReviewSlice, InboxSlice, SchedulerSlice, EventBusSlice, StudioSlice, AuthSlice { }
 
 export const useAppStore = create<AppState>()(
     persist(
         (set, get) => ({
+            // Auth Slice Implementation
+            authUserId: null,
+            authToken: null,
+            authStatus: 'guest',
+            isAuthModalOpen: false,
+            setIsAuthModalOpen: (open) => set({ isAuthModalOpen: open }),
+            setAuthUserId: (id, status, token = null) => set({ authUserId: id, authStatus: status, authToken: token }),
+            initAuth: () => {
+                const state = get();
+                if (state.authStatus === 'logged_in' && state.authUserId) return; // user is currently logged in
+                // If we don't have a guest ID, or if we are guests, ensure an ID exists
+                if (!state.authUserId) {
+                    const guestId = `guest_${crypto.randomUUID()}`;
+                    set({ authUserId: guestId, authStatus: 'guest' });
+                    // Ensure the backend knows about the API base if we make calls here, but this is handled by settings/interceptor.
+                }
+            },
+            logoutAuth: () => {
+                // Return to guest mode
+                const guestId = `guest_${crypto.randomUUID()}`;
+                set({ authUserId: guestId, authStatus: 'guest', authToken: null });
+            },
+
             // Review Slice
             reviewRequest: null,
             reviewResolver: null,
@@ -2459,6 +2493,10 @@ export const useAppStore = create<AppState>()(
                 explorerRootPath: state.explorerRootPath,
                 recentProjects: state.recentProjects,
                 currentSpaceId: state.currentSpaceId, // Phase 4: remember selected space
+                // Auth
+                authUserId: state.authUserId,
+                authStatus: state.authStatus,
+                authToken: state.authToken,
             }),
         }
     )

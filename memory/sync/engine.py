@@ -57,19 +57,26 @@ class SyncEngine:
     def __init__(
         self,
         *,
-        user_id: str,
+        user_id: Optional[str] = None,
         device_id: Optional[str] = None,
         sync_server_url: Optional[str] = None,
         store: Any = None,
         kg: Any = None,
         get_embedding_fn: Optional[Callable[[str], Any]] = None,
     ):
-        self.user_id = user_id
+        self._user_id = user_id
         self.device_id = device_id or get_device_id()
         self.sync_server_url = (sync_server_url or get_sync_server_url()).rstrip("/")
         self._store = store
         self._kg = kg
         self._get_embedding = get_embedding_fn
+
+    @property
+    def user_id(self) -> str:
+        if self._user_id:
+            return self._user_id
+        from memory.user_id import get_user_id
+        return get_user_id() or ""
 
     def push(self) -> PushResponse:
         """Push local changes to sync server. Returns response with cursor."""
@@ -225,12 +232,6 @@ def get_sync_engine(
     if not is_sync_engine_enabled() or not get_sync_server_url():
         return None
     uid = user_id
-    if not uid:
-        try:
-            from memory.user_id import get_user_id
-            uid = get_user_id()
-        except Exception:
-            return None
     if not store:
         try:
             from shared.state import get_remme_store
