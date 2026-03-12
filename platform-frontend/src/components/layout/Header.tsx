@@ -46,7 +46,7 @@ export const Header: React.FC = () => {
         fetchApps, fetchMemories, fetchRuns, fetchMcpServers,
         newsViewMode, setNewsViewMode, setNewsSearchQuery, setSearchResults,
         notesFiles, fetchNotesFiles, isNotesLoading,
-        currentSpaceId, spaces,
+        currentSpaceId,
         gitSummary, fetchGitSummary,
         unreadCount, isInboxOpen, setIsInboxOpen,
         authStatus, authUserId, authUserFirstName, authUserEmail, isAuthModalOpen, setIsAuthModalOpen
