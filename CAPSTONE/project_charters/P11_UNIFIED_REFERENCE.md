@@ -459,13 +459,7 @@ Use this section as the single list of what to do next; update as you complete i
 
 ### 8.9 Future Phase (post–Phase 5) — Spaces and beyond
 
-Items deferred from Phase 3 Spaces or from Phase 5; to consider after Phase 5.
-
-**UI edit (deferred from Phase 5):**
-
-0. **UI edit (frontend) and UI edit flow** — Backend ready (`PUT /remme/preferences/facts`, `UpdateFactRequest`; Step 7). Build frontend to edit preferences/facts: display GET /preferences (hub shape), present canonical fields from registry, call API; backend handles upsert Fact, Evidence, derivation.
-
-**Spaces and beyond:**
+Items deferred from Phase 3 Spaces or from Phase 5; to consider after Phase 5. **UI edit is last** (see end of this section).
 
 1. **Per-space model choice and custom instructions** — Like Perplexity: allow users to override the default model and set custom system instructions per Space, so the assistant behaves differently inside each Space.
 
@@ -488,6 +482,10 @@ Items deferred from Phase 3 Spaces or from Phase 5; to consider after Phase 5.
 10. **Phase 4 Sync Engine — extended scope** — Peer-to-peer sync (no server), full CRDT for in-place text editing (RGA/Automerge), RAG sync, real-time WebSocket push. See design doc §11 Out of scope for v1.
 
 11. **Embedded / "Lite" Local Architecture** — Swap the Qdrant server container for Qdrant local (embedded mode via `path=`) and the Neo4j container for an embedded property graph like **Kùzu** (which natively supports Cypher queries). This allows the entire application—including the Knowledge Graph, advanced RAG, and Sync Engine—to run completely in-process within Python. This enables lightweight local-first desktop packaging without requiring Docker or JVM dependencies.
+
+**Last (deferred from Phase 5):**
+
+12. **UI edit (frontend) and UI edit flow** — Backend ready (`PUT /remme/preferences/facts`, `UpdateFactRequest`; Step 7). Build frontend to edit preferences/facts: display GET /preferences (hub shape), present canonical fields from registry, call API; backend handles upsert Fact, Evidence, derivation. Implement **after** the items above when doing post–Phase 5 work.
 
 ### 8.10 Key design principles (from design doc, for future reference)
 
