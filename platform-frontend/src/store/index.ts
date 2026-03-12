@@ -474,7 +474,9 @@ interface AuthSlice {
     authUserId: string | null;
     authToken: string | null;
     authStatus: 'guest' | 'logged_in';
-    setAuthUserId: (id: string | null, status: 'guest' | 'logged_in', token?: string) => void;
+    authUserFirstName: string | null;
+    authUserEmail: string | null;
+    setAuthUserId: (id: string | null, status: 'guest' | 'logged_in', token?: string, firstName?: string | null, email?: string | null) => void;
     initAuth: () => void;
     logoutAuth: () => void;
     isAuthModalOpen: boolean;
@@ -490,9 +492,17 @@ export const useAppStore = create<AppState>()(
             authUserId: null,
             authToken: null,
             authStatus: 'guest',
+            authUserFirstName: null,
+            authUserEmail: null,
             isAuthModalOpen: false,
             setIsAuthModalOpen: (open) => set({ isAuthModalOpen: open }),
-            setAuthUserId: (id, status, token = null) => set({ authUserId: id, authStatus: status, authToken: token }),
+            setAuthUserId: (id, status, token = null, firstName = null, email = null) => set({ 
+                authUserId: id, 
+                authStatus: status, 
+                authToken: token,
+                authUserFirstName: firstName,
+                authUserEmail: email
+            }),
             initAuth: () => {
                 const state = get();
                 if (state.authStatus === 'logged_in' && state.authUserId) return; // user is currently logged in
@@ -506,7 +516,7 @@ export const useAppStore = create<AppState>()(
             logoutAuth: () => {
                 // Return to guest mode
                 const guestId = `guest_${crypto.randomUUID()}`;
-                set({ authUserId: guestId, authStatus: 'guest', authToken: null });
+                set({ authUserId: guestId, authStatus: 'guest', authToken: null, authUserFirstName: null, authUserEmail: null });
             },
 
             // Review Slice

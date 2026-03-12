@@ -7,6 +7,8 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { useAppStore } from '@/store';
 import { LoginForm } from './LoginForm';
 import { RegisterForm } from './RegisterForm';
 
@@ -17,6 +19,34 @@ interface AuthModalProps {
 
 export const AuthModal = ({ isOpen, onClose }: AuthModalProps) => {
     const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
+    const { authStatus, authUserEmail, authUserFirstName, logoutAuth } = useAppStore();
+
+    if (authStatus === 'logged_in') {
+        return (
+            <Dialog open={isOpen} onOpenChange={onClose}>
+                <DialogContent className="sm:max-w-[400px]">
+                    <DialogHeader>
+                        <DialogTitle>Account</DialogTitle>
+                        <DialogDescription>
+                            You are logged in as {authUserFirstName || authUserEmail || 'User'}.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="py-4">
+                        <Button 
+                            variant="destructive" 
+                            className="w-full" 
+                            onClick={() => {
+                                logoutAuth();
+                                onClose();
+                            }}
+                        >
+                            Log Out
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+        );
+    }
 
     return (
         <Dialog open={isOpen} onOpenChange={onClose}>

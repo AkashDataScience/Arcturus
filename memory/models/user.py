@@ -16,6 +16,8 @@ class User(SQLModel, table=True):
     
     # Auth specifics
     auth_type: AuthType = Field(default=AuthType.guest)
+    first_name: Optional[str] = Field(default=None)
+    last_name: Optional[str] = Field(default=None)
     email: Optional[str] = Field(default=None, index=True, sa_column_kwargs={"unique": True})
     password_hash: Optional[str] = Field(default=None)
     

@@ -16,6 +16,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     guest_id: Optional[str] = None
 
 class UserLogin(BaseModel):
@@ -27,6 +29,8 @@ class TokenOutput(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user_id: str
+    first_name: Optional[str] = None
+    email: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: uuid.UUID
@@ -52,6 +56,8 @@ async def register(user_data: UserCreate, db: Session = Depends(get_session)):
     new_user = User(
         email=user_data.email,
         password_hash=hashed_password,
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
         auth_type=AuthType.registered,
         migrated_guest_ids=[] # Initialize empty migrations array
     )
@@ -83,7 +89,12 @@ async def register(user_data: UserCreate, db: Session = Depends(get_session)):
     token_data = {"sub": str(new_user.id), "email": new_user.email}
     access_token = create_access_token(data=token_data)
     
-    return {"access_token": access_token, "user_id": str(new_user.id)}
+    return {
+        "access_token": access_token, 
+        "user_id": str(new_user.id),
+        "first_name": new_user.first_name,
+        "email": new_user.email
+    }
 
 
 @router.post("/login", response_model=TokenOutput)
@@ -123,7 +134,12 @@ async def login(user_data: UserLogin, db: Session = Depends(get_session)):
     token_data = {"sub": str(user.id), "email": user.email}
     access_token = create_access_token(data=token_data)
     
-    return {"access_token": access_token, "user_id": str(user.id)}
+    return {
+        "access_token": access_token, 
+        "user_id": str(user.id),
+        "first_name": user.first_name,
+        "email": user.email
+    }
 
 
 @router.get("/me", response_model=UserResponse)

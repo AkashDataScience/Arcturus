@@ -19,7 +19,7 @@ export const LoginForm = ({ onSuccess }: { onSuccess: () => void }) => {
         try {
             // Include guest ID for optional migration
             const currentGuestId = useAppStore.getState().authStatus === 'guest' ? useAppStore.getState().authUserId : null;
-            const payload: any = { username: email, password };
+            const payload: any = { email, password };
             if (currentGuestId && currentGuestId.startsWith('guest_')) {
                 payload.guest_id = currentGuestId;
             }
@@ -29,11 +29,16 @@ export const LoginForm = ({ onSuccess }: { onSuccess: () => void }) => {
             const res = await api.post(`${AUTH_API_BASE}/auth/login`, payload);
 
             if (res.data.access_token) {
-                setAuthUserId(res.data.user_id, 'logged_in', res.data.access_token);
+                setAuthUserId(res.data.user_id, 'logged_in', res.data.access_token, res.data.first_name, res.data.email);
                 onSuccess();
             }
         } catch (err: any) {
-            setError(err.response?.data?.detail || 'Login failed');
+            const detail = err.response?.data?.detail;
+            if (Array.isArray(detail)) {
+                setError(detail[0]?.msg || 'Login failed');
+            } else {
+                setError(typeof detail === 'string' ? detail : 'Login failed');
+            }
         } finally {
             setLoading(false);
         }

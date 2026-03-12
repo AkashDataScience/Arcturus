@@ -4,7 +4,7 @@ import { useAppStore } from '../store';
 
 export const API_BASE = 'http://localhost:8000/api';
 // Dedicated base URL for Auth and Sync operations (Cloud Hub)
-export const AUTH_API_BASE = import.meta.env.VITE_AUTH_API_BASE || 'http://localhost:8000';
+export const AUTH_API_BASE = import.meta.env.VITE_AUTH_API_BASE || API_BASE;
 
 // --- Axios Interceptors for Auth ---
 axios.interceptors.request.use(

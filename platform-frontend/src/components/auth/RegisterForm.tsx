@@ -8,6 +8,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 
 export const RegisterForm = ({ onSuccess }: { onSuccess: () => void }) => {
     const [email, setEmail] = useState('');
+    const [firstName, setFirstName] = useState('');
+    const [lastName, setLastName] = useState('');
     const [password, setPassword] = useState('');
     const [mergeData, setMergeData] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -20,7 +22,12 @@ export const RegisterForm = ({ onSuccess }: { onSuccess: () => void }) => {
         setError(null);
         try {
             const currentGuestId = useAppStore.getState().authStatus === 'guest' ? useAppStore.getState().authUserId : null;
-            const payload: any = { email, password };
+            const payload: any = { 
+                email, 
+                password,
+                first_name: firstName,
+                last_name: lastName
+            };
 
             if (mergeData && currentGuestId && currentGuestId.startsWith('guest_')) {
                 payload.guest_id = currentGuestId;
@@ -29,11 +36,16 @@ export const RegisterForm = ({ onSuccess }: { onSuccess: () => void }) => {
             const res = await api.post(`${AUTH_API_BASE}/auth/register`, payload);
 
             if (res.data.access_token) {
-                setAuthUserId(res.data.user_id, 'logged_in', res.data.access_token);
+                setAuthUserId(res.data.user_id, 'logged_in', res.data.access_token, res.data.first_name, res.data.email);
                 onSuccess();
             }
         } catch (err: any) {
-            setError(err.response?.data?.detail || 'Registration failed');
+            const detail = err.response?.data?.detail;
+            if (Array.isArray(detail)) {
+                setError(detail[0]?.msg || 'Registration failed');
+            } else {
+                setError(typeof detail === 'string' ? detail : 'Registration failed');
+            }
         } finally {
             setLoading(false);
         }
@@ -41,6 +53,26 @@ export const RegisterForm = ({ onSuccess }: { onSuccess: () => void }) => {
 
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="flex gap-4">
+                <div className="space-y-2 flex-1">
+                    <Label htmlFor="first-name">First Name</Label>
+                    <Input
+                        id="first-name"
+                        placeholder="John"
+                        value={firstName}
+                        onChange={(e) => setFirstName(e.target.value)}
+                    />
+                </div>
+                <div className="space-y-2 flex-1">
+                    <Label htmlFor="last-name">Last Name</Label>
+                    <Input
+                        id="last-name"
+                        placeholder="Doe"
+                        value={lastName}
+                        onChange={(e) => setLastName(e.target.value)}
+                    />
+                </div>
+            </div>
             <div className="space-y-2">
                 <Label htmlFor="reg-email">Email</Label>
                 <Input
