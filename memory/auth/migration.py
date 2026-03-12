@@ -72,11 +72,11 @@ async def migrate_guest_to_registered(guest_id: uuid.UUID, registered_id: uuid.U
         # --- 2. Migrate Neo4j Knowledge Graph ---
         if is_mnemo_enabled():
             kg = get_knowledge_graph()
-            if kg and kg.driver:
+            if kg and kg._driver:
                 logger.info("Migrating Neo4j graph data...")
                 
                 # We do this in a single explicit transaction to ensure atomicity
-                with kg.driver.session() as session:
+                with kg._driver.session() as session:
                     session.execute_write(_neo4j_migration_tx, guest_id_str, reg_id_str)
                     
                 logger.info("Neo4j migration complete.")

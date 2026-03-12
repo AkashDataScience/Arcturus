@@ -455,6 +455,8 @@ Items deferred from Phase 3 Spaces; to consider in future phases:
 
 10. **Phase 4 Sync Engine — extended scope** — Peer-to-peer sync (no server), full CRDT for in-place text editing (RGA/Automerge), RAG sync, real-time WebSocket push. See design doc §11 Out of scope for v1.
 
+11. **Embedded / "Lite" Local Architecture** — Swap the Qdrant server container for Qdrant local (embedded mode via `path=`) and the Neo4j container for an embedded property graph like **Kùzu** (which natively supports Cypher queries). This allows the entire application—including the Knowledge Graph, advanced RAG, and Sync Engine—to run completely in-process within Python. This enables lightweight local-first desktop packaging without requiring Docker or JVM dependencies.
+
 ### 8.10 Key design principles (from design doc, for future reference)
 
 1. **Neo4j = structured truth** — Entities, relationships, Facts, Evidence.
