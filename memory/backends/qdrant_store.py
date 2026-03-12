@@ -34,6 +34,7 @@ from memory.backends.base import VectorStoreProtocol
 from memory.qdrant_config import get_collection_config, get_default_collection, get_qdrant_url, get_qdrant_api_key
 from memory.space_constants import SPACE_ID_GLOBAL
 from memory.user_id import get_user_id
+from memory.lifecycle import initialize_payload
 
 
 def _distance_from_str(s: str):
@@ -237,6 +238,9 @@ class QdrantVectorStore:
         if metadata:
             payload.update(metadata)
         payload["space_id"] = space_id or (metadata or {}).get("space_id") or SPACE_ID_GLOBAL
+
+        # Initialize lifecycle-related fields (importance, access_count, archived, last_accessed_at).
+        initialize_payload(payload)
 
         point = PointStruct(id=memory_id, vector=embedding_list, payload=payload)
         self.client.upsert(collection_name=self.collection_name, points=[point])

@@ -131,6 +131,10 @@ def retrieve(
         filter_metadata = filter_metadata or {}
         filter_metadata["space_ids"] = _qdrant_space_ids
 
+    # Lifecycle: by default, do not surface archived memories in active retrieval.
+    filter_metadata = filter_metadata or {}
+    filter_metadata.setdefault("archived", False)
+
     # 1. Semantic recall (may return 0 — graph recall will still run)
     semantic_results = _semantic_recall(query, store, k=semantic_k, filter_metadata=filter_metadata)
     if semantic_results:
@@ -158,6 +162,15 @@ def retrieve(
                 entity_ids_from_semantic, user_id=user_id, space_ids=_neo4j_space_ids
             )
             memory_context = _append_graph_expansion(memory_context, expanded, store, result_ids)
+
+    # 4. Lifecycle: update usage metrics (importance, access_count, archival) for all memories we surfaced.
+    try:
+        if result_ids:
+            from memory.lifecycle import record_access
+            record_access(store, list(result_ids))
+    except Exception:
+        # Lifecycle updates should never break retrieval.
+        pass
 
     return memory_context, semantic_results
 
