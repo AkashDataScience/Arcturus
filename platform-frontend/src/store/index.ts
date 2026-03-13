@@ -1583,6 +1583,7 @@ export const useAppStore = create<AppState>()(
                 }
             },
             addMemory: async (text, category = "general", space_id) => {
+                console.log('[store] addMemory calling API', { text: text?.slice(0, 50), category, space_id });
                 try {
                     await api.addMemory(text, category, space_id);
                     get().fetchMemories();
