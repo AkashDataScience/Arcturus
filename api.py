@@ -220,6 +220,7 @@ app.add_middleware(
 from routers import runs as runs_router
 from routers import rag as rag_router
 from routers import remme as remme_router
+from routers import graph as graph_router
 from routers import apps as apps_router
 from routers import settings as settings_router
 from routers import explorer as explorer_router
@@ -227,6 +228,7 @@ from routers import mcp as mcp_router
 app.include_router(runs_router.router, prefix="/api")
 app.include_router(rag_router.router, prefix="/api")
 app.include_router(remme_router.router, prefix="/api")
+app.include_router(graph_router.router, prefix="/api")
 from routers import sync as sync_router
 app.include_router(sync_router.router, prefix="/api")
 app.include_router(apps_router.router, prefix="/api")

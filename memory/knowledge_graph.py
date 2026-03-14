@@ -1919,6 +1919,76 @@ class KnowledgeGraph:
             )
         return [r["memory_id"] for r in records if r.get("memory_id")]
 
+    def get_subgraph_for_explore(
+        self,
+        user_id: str,
+        space_id: Optional[str] = None,
+        limit: int = 150,
+    ) -> Dict[str, Any]:
+        """
+        Return nodes and edges for the knowledge graph explorer UI.
+        Scoped by user's memories; optionally filtered by space_id.
+        Returns { "nodes": [ { id, label, type, ... } ], "edges": [ { source, target, type } ] }.
+        """
+        if not self._enabled or not user_id:
+            return {"nodes": [], "edges": []}
+
+        # Build space filter: when space_id is set and not global, restrict to that space
+        space_filter = ""
+        params: Dict[str, Any] = {"user_id": user_id, "limit": limit}
+        if space_id and space_id != SPACE_ID_GLOBAL:
+            params["space_id"] = space_id
+            space_filter = """
+            MATCH (m)-[:IN_SPACE]->(sp:Space {space_id: $space_id})
+            """
+
+        # Two-step: (1) get entities from user's memories, (2) get relationships between them
+        rel_types = "|".join(sorted(ENTITY_REL_TYPES) + ["RELATED_TO"])
+
+        entity_query = f"""
+            MATCH (u:User {{user_id: $user_id}})-[:HAS_MEMORY]->(m:Memory)
+            {space_filter}
+            MATCH (m)-[:CONTAINS_ENTITY]->(e:Entity)
+            WITH DISTINCT e
+            LIMIT $limit
+            RETURN e.id AS id, e.type AS type, e.name AS name
+            """
+        entities = self._run_query(entity_query, params)
+        if not entities:
+            return {"nodes": [], "edges": []}
+
+        entity_ids = [e["id"] for e in entities if e.get("id")]
+        if not entity_ids:
+            return {"nodes": [], "edges": []}
+
+        placeholders = ", ".join([f"$id{i}" for i in range(len(entity_ids))])
+        rel_list = rel_types.split("|")
+        params2 = {f"id{i}": eid for i, eid in enumerate(entity_ids)}
+        params2["rel_list"] = rel_list
+
+        edges_query = f"""
+            MATCH (a:Entity)-[r]->(b:Entity)
+            WHERE a.id IN [{placeholders}] AND b.id IN [{placeholders}]
+              AND type(r) IN $rel_list
+            RETURN a.id AS source, b.id AS target, type(r) AS type
+            """
+        edges_raw = self._run_query(edges_query, params2)
+
+        nodes = [
+            {
+                "id": e["id"],
+                "label": e.get("name") or e["id"],
+                "type": e.get("type") or "Entity",
+            }
+            for e in entities
+        ]
+        edges = [
+            {"source": r["source"], "target": r["target"], "type": r.get("type") or "RELATED_TO"}
+            for r in edges_raw
+            if r.get("source") and r.get("target")
+        ]
+        return {"nodes": nodes, "edges": edges}
+
 
 # Singleton for app use
 _kg: Optional[KnowledgeGraph] = None

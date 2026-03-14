@@ -2,7 +2,7 @@ import React from 'react';
 import {
     Plus, Clock, Search, Trash2, Database, Box, PlayCircle, Brain,
     LayoutGrid, Newspaper, GraduationCap, Settings, Code2, Loader2, Notebook,
-    CalendarClock, Terminal, Zap, Wand2, FolderOpen
+    CalendarClock, Terminal, Zap, Wand2, FolderOpen, Network
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
@@ -21,12 +21,13 @@ import { ExplorerPanel } from '@/components/sidebar/ExplorerPanel';
 import { AppsSidebar } from '@/features/apps/components/AppsSidebar';
 import { SettingsPanel } from '@/components/sidebar/SettingsPanel';
 import { NewsPanel } from '@/components/sidebar/NewsPanel';
+import { GraphPanel } from '@/components/sidebar/GraphPanel';
 import { StudioSidebar } from '@/features/studio/StudioSidebar';
 
 const NavIcon = ({ icon: Icon, label, tab, active, onClick }: {
     icon: any,
     label: string,
-    tab?: 'runs' | 'spaces' | 'rag' | 'notes' | 'mcp' | 'remme' | 'explorer' | 'apps' | 'news' | 'learn' | 'settings' | 'ide' | 'scheduler' | 'console' | 'skills' | 'canvas' | 'studio',
+    tab?: 'runs' | 'spaces' | 'rag' | 'notes' | 'mcp' | 'remme' | 'explorer' | 'graph' | 'apps' | 'news' | 'learn' | 'settings' | 'ide' | 'scheduler' | 'console' | 'skills' | 'canvas' | 'studio',
     active: boolean,
     onClick: () => void
 }) => {
@@ -169,6 +170,7 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
                     <NavIcon icon={Notebook} label="Notes" tab="notes" active={sidebarTab === 'notes'} onClick={() => setSidebarTab('notes')} />
                     <NavIcon icon={Box} label="MCP" tab="mcp" active={sidebarTab === 'mcp'} onClick={() => setSidebarTab('mcp')} />
                     <NavIcon icon={Brain} label="RemMe" tab="remme" active={sidebarTab === 'remme'} onClick={() => setSidebarTab('remme')} />
+                    <NavIcon icon={Network} label="Graph" tab="graph" active={sidebarTab === 'graph'} onClick={() => setSidebarTab('graph')} />
                     <NavIcon icon={Code2} label="Explorer" tab="explorer" active={sidebarTab === 'explorer'} onClick={() => setSidebarTab('explorer')} />
                     <NavIcon icon={LayoutGrid} label="Canvas" tab="canvas" active={sidebarTab === 'canvas'} onClick={() => setSidebarTab('canvas')} />
 
@@ -402,6 +404,7 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
                     {sidebarTab === 'notes' && <NotesPanel />}
                     {sidebarTab === 'mcp' && <McpPanel />}
                     {sidebarTab === 'remme' && <RemmePanel />}
+                    {sidebarTab === 'graph' && <GraphPanel />}
                     {sidebarTab === 'explorer' && <ExplorerPanel />}
                     {sidebarTab === 'studio' && <StudioSidebar />}
 

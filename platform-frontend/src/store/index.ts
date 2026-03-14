@@ -81,8 +81,8 @@ interface SettingsSlice {
 interface RagViewerSlice {
     viewMode: 'graph' | 'rag' | 'explorer';
     setViewMode: (mode: 'graph' | 'rag' | 'explorer') => void;
-    sidebarTab: 'runs' | 'spaces' | 'rag' | 'notes' | 'mcp' | 'remme' | 'explorer' | 'apps' | 'news' | 'learn' | 'settings' | 'ide' | 'scheduler' | 'console' | 'skills' | 'canvas' | 'studio';
-    setSidebarTab: (tab: 'runs' | 'spaces' | 'rag' | 'notes' | 'mcp' | 'remme' | 'explorer' | 'apps' | 'news' | 'learn' | 'settings' | 'ide' | 'scheduler' | 'console' | 'skills' | 'canvas' | 'studio') => void;
+    sidebarTab: 'runs' | 'spaces' | 'rag' | 'notes' | 'mcp' | 'remme' | 'explorer' | 'graph' | 'apps' | 'news' | 'learn' | 'settings' | 'ide' | 'scheduler' | 'console' | 'skills' | 'canvas' | 'studio';
+    setSidebarTab: (tab: 'runs' | 'spaces' | 'rag' | 'notes' | 'mcp' | 'remme' | 'explorer' | 'graph' | 'apps' | 'news' | 'learn' | 'settings' | 'ide' | 'scheduler' | 'console' | 'skills' | 'canvas' | 'studio') => void;
     isSidebarSubPanelOpen: boolean;
     setSidebarSubPanelOpen: (open: boolean) => void;
     toggleSidebarSubPanel: () => void;

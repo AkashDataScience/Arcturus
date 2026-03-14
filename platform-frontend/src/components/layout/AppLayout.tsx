@@ -36,6 +36,7 @@ import { McpBrowser } from '../mcp/McpBrowser';
 import { McpInspector } from '../mcp/McpInspector';
 import { SettingsPage } from '../settings/SettingsPage';
 import { RemMeProfileView } from '../remme/RemmeProfileView';
+import { KnowledgeGraphExplorer } from '../graph/KnowledgeGraphExplorer';
 import { NewsList } from '@/features/news/components/NewsList';
 import { ElectronBrowserView } from '@/features/news/components/ElectronBrowserView';
 import { NewsInspector } from '@/features/news/components/NewsInspector';
@@ -217,6 +218,8 @@ export const AppLayout: React.FC = () => {
                                         : <NotesEditor />
                                 ) : sidebarTab === 'remme' ? (
                                     <RemMeProfileView />
+                                ) : sidebarTab === 'graph' ? (
+                                    <KnowledgeGraphExplorer />
                                 ) : sidebarTab === 'explorer' ? (
                                     <FlowWorkspace />
                                 ) : sidebarTab === 'ide' ? (

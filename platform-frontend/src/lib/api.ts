@@ -110,6 +110,18 @@ export const api = {
         return res.data;
     },
 
+    /** P11 §11.2: Knowledge graph explorer — fetch subgraph (entities + relationships) for visualization. */
+    getGraphExplore: async (space_id?: string | null, limit?: number): Promise<{ nodes: { id: string; label: string; type: string }[]; edges: { source: string; target: string; type: string }[] }> => {
+        const params: Record<string, string | number> = {};
+        if (space_id) params.space_id = space_id;
+        if (limit) params.limit = limit;
+        const res = await axios.get<{ nodes: { id: string; label: string; type: string }[]; edges: { source: string; target: string; type: string }[] }>(
+            `${API_BASE}/graph/explore`,
+            { params }
+        );
+        return res.data;
+    },
+
     /** Phase E 4.2: Suggest a space for the given memory text (optional current space). User can override. */
     recommendSpace: async (text: string, current_space_id?: string | null): Promise<{ recommended_space_id: string; reason?: string }> => {
         const params: Record<string, string> = {};
