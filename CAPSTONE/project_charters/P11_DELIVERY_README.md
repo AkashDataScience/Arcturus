@@ -123,11 +123,15 @@
 - **Retrieval latency:** P95 &lt; 250 ms target — benchmarked via `scripts/benchmark_retrieval.py` (P95 39.8 ms, PASS).
 - **Async KG ingestion:** When `ASYNC_KG_INGEST=true`, KG entity extraction runs in a background thread after Qdrant upsert. Add returns immediately; graph lags slightly. Env: `ASYNC_KG_INGEST` (default false).
 
-**Future / optional (not part of original delivery)**
-- **Session-level extraction:** Single pass for memories + preferences + entities from session (§8.2).
-- **Retrieval scoping by space:** List/filter done; full retrieval constrained by space implemented in codebase; verify end-to-end.
-- **Frontend:** Graph explorer, spaces manager (beyond current panel/modal).
-- **Qdrant index tuning:** Dimension, distance, sparse config per collection as needed.
+**Graph explorer (delivered)**
+- **Interactive knowledge graph explorer:** `GET /api/graph/explore` (routers/graph.py), `KnowledgeGraphExplorer` (vis-network), Graph nav tab. Entities, User, Memory nodes; entity-type colors; edge labels; selected-node panel with connections.
+
+**Future / optional (remaining from original charter gap analysis)**
+- **11.1 Sharding / federated search:** Per-user shards with cross-user federated search for shared spaces.
+- **11.2 Graph query API:** Dedicated endpoint for agent reasoning: "What do I know about X and how does it relate to Y?"
+- **11.3 Full spaces manager UI:** Beyond SpacesPanel (permissions, bulk actions, analytics).
+- **11.6 Module layout:** `memory/spaces.py`, `memory/sync.py` (architectural note; functionality delivered in knowledge_graph + remme + memory/sync/).
+- **Mandatory test gate verification:** Confirm 10 hard conditions (8 acceptance cases, 5 integration scenarios, explicit coverage for ingestion/ranking/contradiction/lifecycle, cross-project failure propagation).
 
 ## 2. Architecture Changes
 
@@ -143,7 +147,8 @@ scripts/migrate_faiss_to_qdrant.py   — FAISS → Qdrant memories (used by migr
 scripts/test_qdrant_setup.py
 
 # Phase 2/3 (Neo4j Knowledge Graph)
-memory/knowledge_graph.py        — Neo4j client, schema (User, Memory, Session, Entity, Fact, Evidence, Space)
+memory/knowledge_graph.py        — Neo4j client, schema (User, Memory, Session, Entity, Fact, Evidence, Space); get_subgraph_for_explore()
+routers/graph.py                 — GET /api/graph/explore (knowledge graph subgraph for UI)
 memory/entity_extractor.py       — LLM extraction; extract_from_query for query NER
 memory/memory_retriever.py       — Dual-path retrieval (semantic + entity recall), graph expansion, space filter
 core/skills/library/entity_extraction/ — Entity extraction skill (SKILL.md, registry)
@@ -197,6 +202,8 @@ Memory retrieval (runs.py → memory_retriever.retrieve)
 ## 3. API And UI Changes
 
 ### Backend
+- **REST endpoints (Graph explorer)**:
+  - `GET /api/graph/explore?space_id=&limit=` — Subgraph (nodes, edges) for knowledge graph visualization.
 - **REST endpoints (Phase 3)**:
   - `POST /api/remme/spaces` — Create space (`CreateSpaceRequest`: name, description, optional `sync_policy`)
   - `GET /api/remme/spaces` — List user spaces (returns sync_policy, version, etc.)
@@ -218,6 +225,7 @@ Memory retrieval (runs.py → memory_retriever.retrieve)
   - `from memory.knowledge_graph import get_knowledge_graph; kg = get_knowledge_graph()` (when `NEO4J_ENABLED=true`)
 
 ### Frontend
+- **Graph explorer**: Graph nav tab, KnowledgeGraphExplorer (vis-network); space filter, zoom/pan, node colors by type, edge labels, selected-node panel with connections.
 - **Spaces UI (Phase 3)**: SpacesPanel, SpacesModal; create/list/select spaces; space selector in New Run and Add Memory; `currentSpaceId` persisted; runs and memories filtered by selected space.
 - **Phase 4**: Create Space dialog includes “Keep on this device only (don’t sync to cloud)” checkbox; `api.createSpace(name, description?, sync_policy?)`; store passes `sync_policy` to API.
 - **Phase 5 done**: Login/register UI, auth slice, user_id from frontend. UI edit for preferences/facts: backend-ready, frontend deferred.
@@ -284,7 +292,7 @@ uv run pytest tests/integration/test_sync_two_devices_converge.py -v -m slow
 - **Qdrant Cloud**: Uses API key authentication; ensure keys are scoped and rotated as needed
 
 ## 8. Known Gaps
-- See **Remaining** (above) for future/optional work (UI edit for preferences/facts, session-level extraction, graph explorer, etc.). Retrieval P95 benchmark and guest user_id stability: done.
+- **Remaining items** (from original charter gap analysis): (1) 11.1 Sharding/federated search, (2) 11.2 Graph query API for structured reasoning, (3) 11.3 Full spaces manager UI, (4) 11.6 Module layout note, (5) Mandatory test gate (10 hard conditions) verification. See **Future / optional** above.
 - **Phase 5:** Completed. Login/register, Lifecycle, user_id FE ownership, Shared Space, Phase 5A–E delivered. UI edit for preferences/facts is backend-ready, frontend deferred.
 - **Sync auth:** Addressed (user_id from auth context, not body).
 - **Guest user_id stability:** Addressed (FE ownership, X-User-Id, legacy-guest-id for migration).

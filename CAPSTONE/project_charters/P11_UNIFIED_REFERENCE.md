@@ -44,6 +44,7 @@ Update **§2 Status at a glance** and **§8 Remaining / next steps** as work pro
 | **Global space memories fix** | ✅ Done | get_all(space_id=__global__) returns points with space_id==__global__ OR empty (legacy); tenant-scoped; see §4.4 |
 | **UI edit (frontend)** | ⏳ Deferred (post Phase 5) | Backend ready; frontend deferred; see §8.9 |
 | **Entity-friendly Qdrant payload** | ✅ Done | entity_ids + entity_labels indexed; qdrant_store writes both; indexed in qdrant_config.yaml |
+| **Graph explorer (11.2)** | ✅ Done | GET /api/graph/explore; KnowledgeGraphExplorer (vis-network); node colors, edge labels, selected-node panel |
 | **Expansion depth** | ⏳ Future | One-hop only; `depth` parameter reserved for multi-hop |
 | **user_id: FE ownership** | ✅ Done | Frontend/context; backend accepts JWT/X-User-Id; file fallback gated; see §8.7 |
 
@@ -444,7 +445,7 @@ Use this section as the single list of what to do next; update as you complete i
 ### 8.6b Other known gaps (from delivery README)
 
 - Expansion depth: one-hop only; `depth` reserved for multi-hop.
-- Frontend (graph explorer, spaces manager): deferred.
+- Frontend: graph explorer done; spaces manager (full UI) deferred.
 - Acceptance/integration tests: structural tests in place; feature-level tests to be expanded per charter.
 
 ### 8.7 user_id: frontend ownership (Phase 5, for server deployment)
@@ -491,7 +492,7 @@ Use this section as the single list of what to do next; update as you complete i
      - `visibility="space"` without a non-global space_id is rejected.
    - Today Qdrant is tenant-scoped by user_id, so these controls prepare for future cross-user shared-space retrieval; current behavior remains strictly per-user.
 
-5. **Other** — Phase 3 retrieval scoping by space is implemented for memories/entities (see §8.4 and §8.8a). **Expansion depth (multi-hop)** and UI surfaces (graph explorer, spaces manager) are moved to §8.9 Future Phase (post–Phase 5).
+5. **Other** — Phase 3 retrieval scoping by space is implemented for memories/entities (see §8.4 and §8.8a). **Graph explorer** is done (§2). **Expansion depth (multi-hop)** and **full spaces manager UI** are in §8.9 Future Phase (post–Phase 5).
 
 **Deferred to post–Phase 5:**
 
@@ -586,6 +587,7 @@ Items deferred from Phase 3 Spaces or from Phase 5; to consider after Phase 5. *
 | Qdrant config | `config/qdrant_config.yaml`; loader: `memory/qdrant_config.py` |
 | Spaces API (Phase 3) | `routers/remme.py` — POST/GET /remme/spaces; GET /remme/memories?space_id= |
 | Recommend space (Phase 5E) | `routers/remme.py` — GET /remme/recommend-space?text=&current_space_id= |
+| Graph explorer | `routers/graph.py` — GET /api/graph/explore; `KnowledgeGraphExplorer` (vis-network) |
 | Sync Engine (Phase 4) | `memory/sync/` — SyncEngine, get_sync_engine; `routers/sync.py` — /api/sync/push, pull, trigger |
 | Real-time indexing benchmark (Phase 5D) | `scripts/benchmark_realtime_indexing.py` — validates ~100 ms time-to-searchable |
 | Delivery checklist (fixed) | `CAPSTONE/project_charters/P11_DELIVERY_README.md` |
@@ -611,17 +613,25 @@ Gap analysis between the original charter and current implementation. Reference:
 | **11.5** | Importance scoring, decay/archival, contradiction, privacy | ✅ Done |
 | **11.6** | vector_store.py, knowledge_graph.py, lifecycle.py | ✅ Done |
 | **11.6** | Episodic memory migration | ✅ Phase 5B done |
+| **11.2** | Interactive knowledge graph explorer (frontend) | ✅ Done — `GET /api/graph/explore`, KnowledgeGraphExplorer (vis-network), Graph nav tab, node colors, edge labels, selected-node panel |
 
-### 11.2 Gaps / Deferred vs original charter
+### 11.2 Remaining / Gaps vs original charter
 
 | Charter section | Original goal | Current status |
 |-----------------|---------------|----------------|
 | **11.1** | Per-user shards with cross-user federated search (for shared spaces) | ⏳ Future (see §8.9 item 8) |
 | **11.2** | Graph query API for agent reasoning: "What do I know about X and how does it relate to Y?" | ⏳ No explicit graph query API; retrieval uses expansion but no dedicated structured-reasoning endpoint |
-| **11.2** | Interactive knowledge graph explorer (frontend) | ⏳ Deferred (see §8.6b, §8.9) |
 | **11.3** | Spaces manager (frontend) | ⏳ Partial; SpacesPanel exists; full manager UI deferred (§8.6b) |
 | **11.6** | `memory/spaces.py`, `memory/sync.py` | Architecture differs: space logic in knowledge_graph + remme; sync in `memory/sync/` |
-| **11.6** | Frontend: `features/memory/` — graph explorer, spaces manager, memory browser | ⏳ Memory browser and SpacesPanel exist; graph explorer and full spaces manager deferred |
+| **11.6** | Frontend: full spaces manager, memory browser | ⏳ Memory browser and SpacesPanel exist; full spaces manager deferred |
+
+### 11.2a Remaining items (summary)
+
+1. **11.1 Sharding / federated search** — Per-user shards with cross-user federated search for shared spaces.
+2. **11.2 Graph query API** — Dedicated endpoint for structured reasoning: "What do I know about X and how does it relate to Y?"
+3. **11.3 Full spaces manager UI** — Beyond SpacesPanel (e.g. permissions, bulk actions, space analytics).
+4. **11.6 Module layout** — `memory/spaces.py`, `memory/sync.py` (architectural; functionality delivered elsewhere).
+5. **Mandatory test gate** — Verify 10 hard conditions from original charter (8 acceptance cases, 5 integration scenarios, explicit coverage for ingestion/ranking/contradiction/lifecycle, cross-project failure propagation).
 
 ### 11.3 Mandatory test gate (Expanded Contract)
 
