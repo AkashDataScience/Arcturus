@@ -94,7 +94,7 @@ class SwarmRunner:
         """
         import uuid
         self.session_id = session_id or f"swarm_{uuid.uuid4().hex[:8]}"
-        
+
         # Reset graph and budget accumulators for fresh run
         self.graph = nx.DiGraph()
         self.graph.graph["session_id"] = self.session_id
@@ -182,16 +182,17 @@ class SwarmRunner:
             futures_map = {}  # future → node_id
             for node_id in ready_nodes:
                 task = self.graph.nodes[node_id]["task"]
-                
+
                 # 📼 Chronicle: emit STEP_START
                 try:
+                    import asyncio
+
                     from session.capture import get_capture
                     from session.schema import EventType
-                    import asyncio
-                    
+
                     _chronicle = get_capture()
                     _sid = self.session_id
-                    
+
                     asyncio.create_task(_chronicle.emit(
                         EventType.STEP_START,
                         {
@@ -227,7 +228,7 @@ class SwarmRunner:
                 node_id, res, err = await completed_task
                 task = self.graph.nodes[node_id]["task"]
                 retries = self.graph.nodes[node_id]["retries"]
-                
+
                 if err:
                     e = err
                     if retries < self.max_task_retries:
@@ -246,15 +247,17 @@ class SwarmRunner:
 
                         # 📼 Chronicle: emit STEP_FAILED and checkpoint
                         try:
-                            from session.capture import get_capture
-                            from session.schema import EventType
-                            from session.checkpoint import create_checkpoint
-                            import networkx as nx
                             import asyncio
-                            
+
+                            import networkx as nx
+
+                            from session.capture import get_capture
+                            from session.checkpoint import create_checkpoint
+                            from session.schema import EventType
+
                             _chronicle = get_capture()
                             _sid = self.session_id
-                            
+
                             asyncio.create_task(_chronicle.emit(
                                 EventType.STEP_FAILED,
                                 {
@@ -264,8 +267,8 @@ class SwarmRunner:
                                 },
                                 session_id=_sid,
                             ))
-                            
-                            create_checkpoint(_sid, "step_failed", self.graph, last_sequence=_chronicle._sequence)
+
+                            create_checkpoint(_sid, "step_failed", self.graph, last_sequence=_chronicle.get_last_sequence(_sid))
                         except Exception as exc:
                             logger.debug(f"[SwarmRunner] Chronicle STEP_FAILED failed: {exc}")
                 else:
@@ -283,15 +286,17 @@ class SwarmRunner:
 
                     # 📼 Chronicle: emit STEP_COMPLETE and checkpoint
                     try:
-                        from session.capture import get_capture
-                        from session.schema import EventType
-                        from session.checkpoint import create_checkpoint
-                        import networkx as nx
                         import asyncio
-                        
+
+                        import networkx as nx
+
+                        from session.capture import get_capture
+                        from session.checkpoint import create_checkpoint
+                        from session.schema import EventType
+
                         _chronicle = get_capture()
                         _sid = self.session_id
-                        
+
                         asyncio.create_task(_chronicle.emit(
                             EventType.STEP_COMPLETE,
                             {
@@ -304,8 +309,8 @@ class SwarmRunner:
                             },
                             session_id=_sid,
                         ))
-                        
-                        create_checkpoint(_sid, "step_complete", self.graph, last_sequence=_chronicle._sequence)
+
+                        create_checkpoint(_sid, "step_complete", self.graph, last_sequence=_chronicle.get_last_sequence(_sid))
                     except Exception as exc:
                         logger.debug(f"[SwarmRunner] Chronicle STEP_COMPLETE failed: {exc}")
 
