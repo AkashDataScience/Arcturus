@@ -560,6 +560,52 @@ class KnowledgeGraph:
             {"space_id": space_id},
         )
 
+    def move_memory_to_space(
+        self,
+        memory_id: str,
+        target_space_id: Optional[str],
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """
+        Move a memory to a different space. Updates (Memory)-[:IN_SPACE]->(Space).
+        - target_space_id None or __global__: remove IN_SPACE (memory becomes global).
+        - target_space_id: link to that Space. Space must exist; use can_user_access_space first.
+        Returns True if the graph was updated (Memory existed); False if Memory not in graph.
+        """
+        if not self._enabled or not memory_id:
+            return False
+        use_space = target_space_id and target_space_id != SPACE_ID_GLOBAL
+
+        # Remove any existing IN_SPACE relationship
+        self._run_write(
+            """
+            MATCH (m:Memory {id: $memory_id})
+            OPTIONAL MATCH (m)-[r:IN_SPACE]->()
+            DELETE r
+            RETURN m AS m
+            """,
+            {"memory_id": memory_id},
+        )
+        # _run_write returns result of last statement; we need to check if m was matched
+        check = self._run_query(
+            "MATCH (m:Memory {id: $memory_id}) RETURN 1 AS x LIMIT 1",
+            {"memory_id": memory_id},
+        )
+        if not check:
+            return False
+
+        if use_space:
+            # Add IN_SPACE to target space (Space must exist)
+            self._run_write(
+                """
+                MATCH (m:Memory {id: $memory_id})
+                MATCH (sp:Space {space_id: $space_id})
+                MERGE (m)-[:IN_SPACE]->(sp)
+                """,
+                {"memory_id": memory_id, "space_id": target_space_id},
+            )
+        return True
+
     def create_memory(
         self,
         memory_id: str,

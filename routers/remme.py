@@ -60,6 +60,11 @@ class LifecycleOverrideRequest(BaseModel):
     access_count: int | None = None
 
 
+class MoveMemorySpaceRequest(BaseModel):
+    """Request body for moving a memory to another space. Enhances space recommendation UX."""
+    space_id: str | None = None  # null or __global__ = move to global
+
+
 # === Background Tasks ===
 
 async def background_smart_scan():
@@ -503,6 +508,73 @@ async def delete_memory(memory_id: str):
     try:
         remme_store.delete(memory_id)
         return {"status": "success", "id": memory_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/memories/{memory_id}/space")
+async def move_memory_to_space(
+    memory_id: str = PathParam(..., description="Memory id to move"),
+    background_tasks: BackgroundTasks = ...,  # Required for sync trigger
+    body: MoveMemorySpaceRequest = MoveMemorySpaceRequest(),
+):
+    """
+    Move a memory to another space. Enhances space recommendation: user can accept a
+    suggestion and move an existing memory to the recommended space.
+    - space_id: target space id; omit or __global__ to move to global.
+    - Target space must exist and user must have access (owner or shared-with).
+    """
+    target_space_id = body.space_id if body.space_id and body.space_id != SPACE_ID_GLOBAL else None
+    try:
+        m = remme_store.get(memory_id)
+        if not m:
+            raise HTTPException(status_code=404, detail="Memory not found")
+
+        # Validate target space exists and user has access (can_user_access_space requires Space to exist)
+        if target_space_id:
+            try:
+                from memory.knowledge_graph import get_knowledge_graph
+                from memory.user_id import get_user_id
+                kg = get_knowledge_graph()
+                if kg and kg.enabled:
+                    if not kg.can_user_access_space(get_user_id(), target_space_id):
+                        raise HTTPException(
+                            status_code=403,
+                            detail="You do not have access to the target space",
+                        )
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
+        # Update Qdrant payload
+        space_value = target_space_id if target_space_id else SPACE_ID_GLOBAL
+        ok = remme_store.update(memory_id, metadata={"space_id": space_value})
+        if not ok:
+            raise HTTPException(status_code=500, detail="Failed to update memory")
+
+        # Update Neo4j (Memory)-[:IN_SPACE]->(Space)
+        try:
+            from memory.knowledge_graph import get_knowledge_graph
+            kg = get_knowledge_graph()
+            if kg and kg.enabled:
+                kg.move_memory_to_space(memory_id, target_space_id)
+        except Exception as e:
+            # Log but don't fail; Qdrant is source of truth
+            print(f"⚠️ Neo4j move_memory_to_space failed (memory moved in Qdrant): {e}")
+
+        # Trigger background sync when sync engine enabled
+        try:
+            from memory.sync_config import is_sync_engine_enabled, get_sync_server_url
+            if is_sync_engine_enabled() and get_sync_server_url():
+                from routers.sync import run_sync_background
+                background_tasks.add_task(run_sync_background)
+        except Exception:
+            pass
+
+        return {"status": "success", "memory_id": memory_id, "space_id": space_value}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
