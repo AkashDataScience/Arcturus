@@ -437,7 +437,7 @@ Use this section as the single list of what to do next; update as you complete i
 ### 8.6 Defects and hardening
 
 - **Sync auth:** Sync endpoints accept `user_id` in body with no authentication; should be tied to login/session for multi-tenant.
-- **Guest / not-logged-in:** When `user_id` is from file fallback (`VITE_ENABLE_LOCAL_MIGRATION=true`), server restart or missing file can regenerate a new `user_id`; previously stored memories may not appear. Consider persisting guest id in frontend and sending with every request.
+- **Guest user_id stability:** Addressed. FE owns guest identity (persists `authUserId`, sends X-User-Id); BE file fallback only for non-request contexts when VITE_ENABLE_LOCAL_MIGRATION=true.
 - **Retrieval P95 < 250 ms:** Benchmark implemented via `scripts/benchmark_retrieval.py`; P95 39.8 ms (PASS).
 - **Real-time indexing:** If KG ingest dominates add latency, consider async KG ingestion (return after upsert, run KG in background).
 
