@@ -110,6 +110,8 @@ def initialize_payload(payload: Dict[str, Any], *, now: Optional[datetime] = Non
     now_dt = now or datetime.utcnow()
     now_iso = now_dt.isoformat()
     created_at = str(payload.get("created_at") or now_iso)
+    if "created_at" not in payload:
+        payload["created_at"] = created_at
 
     if "access_count" not in payload:
         payload["access_count"] = 0

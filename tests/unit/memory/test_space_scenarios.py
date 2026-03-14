@@ -69,7 +69,7 @@ class TestMemoryRetrieverSpaceFilter:
     """retrieve() builds correct filter_metadata for space_id/space_ids."""
 
     def test_retrieve_with_space_id_builds_filter(self):
-        """When space_id passed and not __global__, filter includes global + that space."""
+        """When space_id passed and not __global__, filter includes only that space (no global injection)."""
         from unittest.mock import MagicMock, patch
         import numpy as np
 
@@ -88,11 +88,10 @@ class TestMemoryRetrieverSpaceFilter:
         call_kw = mock_store.search.call_args[1] if mock_store.search.called else {}
         meta = call_kw.get("filter_metadata") or {}
         assert "space_ids" in meta
-        assert SPACE_ID_GLOBAL in meta["space_ids"]
-        assert "space-uuid-456" in meta["space_ids"]
+        assert meta["space_ids"] == ["space-uuid-456"]
 
     def test_retrieve_with_space_id_global_no_space_filter(self):
-        """When space_id is __global__, no space filter added."""
+        """When space_id is __global__, filter is global-only (space_ids=[__global__])."""
         from unittest.mock import MagicMock, patch
 
         mock_store = MagicMock()
@@ -104,9 +103,9 @@ class TestMemoryRetrieverSpaceFilter:
                     from memory.memory_retriever import retrieve
 
                     _, _ = retrieve("query", space_id=SPACE_ID_GLOBAL)
-                    call_kw = mock_store.search.call_args[1] if mock_store.search.called else {}
-                    meta = call_kw.get("filter_metadata") or {}
-                    assert "space_ids" not in meta or meta.get("space_ids") is None
+        call_kw = mock_store.search.call_args[1] if mock_store.search.called else {}
+        meta = call_kw.get("filter_metadata") or {}
+        assert meta.get("space_ids") == [SPACE_ID_GLOBAL]
 
     def test_retrieve_without_space_id_no_space_filter(self):
         """When space_id and space_ids not passed, no space filter."""
@@ -126,7 +125,7 @@ class TestMemoryRetrieverSpaceFilter:
                     assert "space_ids" not in meta or meta.get("space_ids") is None
 
     def test_retrieve_with_space_ids_builds_filter(self):
-        """When space_ids list passed, filter includes global + requested spaces."""
+        """When space_ids list passed (without global), filter includes only those spaces."""
         from unittest.mock import MagicMock, patch
         import numpy as np
 
@@ -145,7 +144,6 @@ class TestMemoryRetrieverSpaceFilter:
         call_kw = mock_store.search.call_args[1] if mock_store.search.called else {}
         meta = call_kw.get("filter_metadata") or {}
         assert "space_ids" in meta
-        assert SPACE_ID_GLOBAL in meta["space_ids"]
         assert "space-a" in meta["space_ids"]
         assert "space-b" in meta["space_ids"]
 
@@ -217,7 +215,8 @@ class TestPreferencesApiSpaceParams:
     def client(self):
         from fastapi.testclient import TestClient
         from api import app
-        return TestClient(app)
+        AUTH_HEADERS = {"X-User-Id": "00000000-0000-0000-0000-000000000001"}
+        return TestClient(app, headers=AUTH_HEADERS)
 
     def test_preferences_without_space_params(self, client):
         """No space params → request proceeds (may hit mnemo or legacy path)."""
@@ -250,15 +249,22 @@ class TestRunsApiSpaceId:
         from fastapi.testclient import TestClient
         from api import app
 
-        client = TestClient(app)
+        AUTH_HEADERS = {"X-User-Id": "00000000-0000-0000-0000-000000000001"}
+        client = TestClient(app, headers=AUTH_HEADERS)
         resp = client.post("/api/runs", json={"query": "hello"})
         assert resp.status_code in (200, 201)
 
-    def test_runs_with_space_id(self):
+    def test_runs_with_space_id(self, monkeypatch):
         """Request body with space_id is valid."""
         from fastapi.testclient import TestClient
         from api import app
 
-        client = TestClient(app)
+        # Mock space access so test user can run in space-uuid-789
+        monkeypatch.setattr(
+            "memory.knowledge_graph.get_knowledge_graph",
+            lambda: type("MockKG", (), {"enabled": False})(),
+        )
+        AUTH_HEADERS = {"X-User-Id": "00000000-0000-0000-0000-000000000001"}
+        client = TestClient(app, headers=AUTH_HEADERS)
         resp = client.post("/api/runs", json={"query": "hello", "space_id": "space-uuid-789"})
         assert resp.status_code in (200, 201)
