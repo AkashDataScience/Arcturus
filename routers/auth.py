@@ -6,7 +6,7 @@ from typing import Optional
 
 from config.database import get_session
 from memory.models.user import User, AuthType
-from core.auth.security import verify_password, get_password_hash, create_access_token
+from core.auth.security import verify_password, get_password_hash, create_access_token, is_jwt_configured, AUTH_NOT_CONFIGURED_MSG
 from core.auth.context import get_current_user_id
 
 import traceback
@@ -42,6 +42,8 @@ from memory.auth.migration import migrate_guest_to_registered
 
 @router.post("/register", response_model=TokenOutput)
 async def register(user_data: UserCreate, db: Session = Depends(get_session)):
+    if not is_jwt_configured():
+        raise HTTPException(status_code=503, detail=AUTH_NOT_CONFIGURED_MSG)
     # 1. Check if email already exists
     statement = select(User).where(User.email == user_data.email)
     existing_user = db.exec(statement).first()
@@ -101,6 +103,8 @@ async def register(user_data: UserCreate, db: Session = Depends(get_session)):
 
 @router.post("/login", response_model=TokenOutput)
 async def login(user_data: UserLogin, db: Session = Depends(get_session)):
+    if not is_jwt_configured():
+        raise HTTPException(status_code=503, detail=AUTH_NOT_CONFIGURED_MSG)
     # 1. Fetch user by email
     statement = select(User).where(User.email == user_data.email)
     user = db.exec(statement).first()

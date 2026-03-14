@@ -40,6 +40,10 @@ export const RegisterForm = ({ onSuccess }: { onSuccess: () => void }) => {
                 onSuccess();
             }
         } catch (err: any) {
+            if (err.response?.status === 503) {
+                setError('Auth not configured');
+                return;
+            }
             const detail = err.response?.data?.detail;
             if (Array.isArray(detail)) {
                 setError(detail[0]?.msg || 'Registration failed');

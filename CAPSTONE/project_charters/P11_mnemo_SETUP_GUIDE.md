@@ -382,6 +382,7 @@ rag_store = get_rag_vector_store(provider="qdrant")  # arcturus_rag_chunks
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
+| `MNEMO_SECRET_KEY` | JWT signing secret (HS256). Required for login/register. | (required; no fallback) |
 | `QDRANT_URL` | Qdrant server URL | `http://localhost:6333` |
 | `QDRANT_API_KEY` | API key (Cloud) | `null` |
 | `VECTOR_STORE_PROVIDER` | Remme memories backend | `faiss` |
@@ -485,7 +486,37 @@ Leave `SYNC_ENGINE_ENABLED` unset or `false`. No push/pull, no startup sync, no 
 
 ---
 
-## Phase 5: Authentication & Cloud Hub (Frontend)
+## Phase 5: Authentication & Cloud Hub
+
+### MNEMO_SECRET_KEY (Required for Login/Register)
+
+Login and register require a JWT signing secret. The app starts without it (guest flow works), but login/register return 503 until configured.
+
+**Generate an HS256 secret:**
+
+```bash
+openssl rand -base64 48
+```
+
+Or with Python:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+**Add to `.env`:**
+
+```
+MNEMO_SECRET_KEY=<paste-the-generated-key-here>
+```
+
+- **Local dev**: Generate once per machine, add to your `.env`.
+- **Production**: Generate a unique key per deployment, store in env or a secret manager. Never commit it.
+- **Multi-device sync**: If the central server issues JWTs, only the central server needs this key. Client devices do not need it.
+
+See `.env.example` for the variable name. Never use a hard-coded or publicly known secret in production.
+
+### Cloud Hub (Frontend)
 
 By default, the Arcturus Electron/Web frontend will communicate with your local backend at `http://localhost:8000/api` for both data operations and authentication/syncing.
 
