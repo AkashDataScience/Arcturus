@@ -2552,6 +2552,8 @@ export const useAppStore = create<AppState>()(
                 authUserId: state.authUserId,
                 authStatus: state.authStatus,
                 authToken: state.authToken,
+                authUserFirstName: state.authUserFirstName,
+                authUserEmail: state.authUserEmail,
             }),
         }
     )

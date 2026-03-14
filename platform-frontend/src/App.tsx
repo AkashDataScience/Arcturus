@@ -61,10 +61,12 @@ function App() {
     checkBackend();
   }, []);
 
-  // Initialize Auth exactly once on mount
+  // Initialize Auth after backend is ready
   useEffect(() => {
-    useAppStore.getState().initAuth();
-  }, []);
+    if (isBackendReady) {
+      useAppStore.getState().initAuth();
+    }
+  }, [isBackendReady]);
 
   return (
     <ThemeProvider defaultTheme="dark">
