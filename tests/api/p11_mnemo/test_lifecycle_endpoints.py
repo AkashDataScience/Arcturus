@@ -1,9 +1,10 @@
 from fastapi.testclient import TestClient
 
-from main import app
+from api import app
 
-
-client = TestClient(app)
+# Test user ID (valid UUID) for AuthMiddleware on protected /api/remme routes
+AUTH_HEADERS = {"X-User-Id": "00000000-0000-0000-0000-000000000001"}
+client = TestClient(app, headers=AUTH_HEADERS)
 
 
 def test_lifecycle_inspect_and_override(monkeypatch):
@@ -42,7 +43,7 @@ def test_lifecycle_inspect_and_override(monkeypatch):
     remme_router.remme_store = dummy
 
     # GET lifecycle
-    res_get = client.get("/remme/memories/mem-1/lifecycle")
+    res_get = client.get("/api/remme/memories/mem-1/lifecycle")
     assert res_get.status_code == 200
     data = res_get.json()
     lf = data["lifecycle"]
@@ -52,7 +53,7 @@ def test_lifecycle_inspect_and_override(monkeypatch):
 
     # PATCH lifecycle
     res_patch = client.patch(
-        "/remme/memories/mem-1/lifecycle",
+        "/api/remme/memories/mem-1/lifecycle",
         json={"archived": True, "importance": 0.05, "access_count": 3},
     )
     assert res_patch.status_code == 200

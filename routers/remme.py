@@ -445,6 +445,8 @@ async def add_memory(request: AddMemoryRequest, background_tasks: BackgroundTask
             pass
 
         return {"status": "success", "memory": memory}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -462,6 +464,7 @@ async def recommend_space(
     try:
         from memory.space_constants import SPACE_ID_GLOBAL
 
+        # pdb.set_trace()
         # No text or very short: suggest current context or global
         if not (text and text.strip()):
             out = current_space_id if current_space_id and current_space_id != SPACE_ID_GLOBAL else SPACE_ID_GLOBAL
