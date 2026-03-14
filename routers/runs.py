@@ -211,7 +211,6 @@ async def process_run(
                         pass
                 memory_context, results = retrieve(
                     query,
-                    session_id=run_id,
                     space_id=_space_id,
                 )
                 if memory_context:
