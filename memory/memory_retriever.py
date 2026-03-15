@@ -76,6 +76,8 @@ def retrieve(
     store: Optional[Any] = None,
     top_for_context: int = 3,
     semantic_k: int = 10,
+    space_id: Optional[str] = None,
+    space_ids: Optional[List[str]] = None,
 ) -> tuple[str, List[Dict[str, Any]]]:
     """
     Retrieve and merge memories for a query, optionally scoped by user and session.
@@ -101,11 +103,37 @@ def retrieve(
     result_ids: set = set()
     memory_context = ""
 
-    # pdb.set_trace()
     # Build filter for session-scoped retrieval (memory-backed session routing)
     filter_metadata: Optional[Dict[str, Any]] = None
     if session_id:
-        filter_metadata = {"session_id": session_id} # TODO GG: This need to be reviewed further to ensure it doesn't limit the recall of memories
+        filter_metadata = {"session_id": session_id}
+    # Phase 3 / Shared Space: space filter.
+    # When run is in a specific space (space_id != __global__): do NOT inject global memories/entities —
+    # only that space. When space_id is __global__ or None: only global or unscoped (no cross-space leak).
+    from memory.space_constants import SPACE_ID_GLOBAL
+    _qdrant_space_ids: Optional[List[str]] = None
+    _neo4j_space_ids: Optional[List[str]] = None
+    if space_ids:
+        _neo4j_space_ids = [s for s in space_ids if s and s != SPACE_ID_GLOBAL]
+        # Include global only if explicitly in space_ids (e.g. when viewing Global space)
+        _qdrant_space_ids = list(dict.fromkeys(([SPACE_ID_GLOBAL] if SPACE_ID_GLOBAL in space_ids else []) + _neo4j_space_ids))
+    elif space_id and space_id != SPACE_ID_GLOBAL:
+        # Run in a specific space: only that space (no global injection)
+        _neo4j_space_ids = [space_id]
+        _qdrant_space_ids = [space_id]
+    elif space_id == SPACE_ID_GLOBAL:
+        # Explicit Global space: only global (no per-space memories)
+        _qdrant_space_ids = [SPACE_ID_GLOBAL]
+        _neo4j_space_ids = [SPACE_ID_GLOBAL]  # Neo4j: sp IS NULL OR sp.space_id IN $space_ids → global only
+    if _qdrant_space_ids and filter_metadata is None:
+        filter_metadata = {}
+    if _qdrant_space_ids:
+        filter_metadata = filter_metadata or {}
+        filter_metadata["space_ids"] = _qdrant_space_ids
+
+    # Lifecycle: by default, do not surface archived memories in active retrieval.
+    filter_metadata = filter_metadata or {}
+    filter_metadata.setdefault("archived", False)
 
     # 1. Semantic recall (may return 0 — graph recall will still run)
     semantic_results = _semantic_recall(query, store, k=semantic_k, filter_metadata=filter_metadata)
@@ -121,7 +149,7 @@ def retrieve(
     # 2. Entity recall — INDEPENDENT of semantic. Runs whenever kg enabled, even if semantic returned 0.
     kg = _get_knowledge_graph()
     if kg and kg.enabled:
-        entity_recall_ids = _entity_recall(query, user_id, kg)
+        entity_recall_ids = _entity_recall(query, user_id, kg, space_ids=_neo4j_space_ids)
         if entity_recall_ids:
             memory_context = _append_entity_memories(memory_context, entity_recall_ids, store, result_ids)
 
@@ -130,8 +158,19 @@ def retrieve(
         for r in semantic_results:
             entity_ids_from_semantic.extend(r.get("entity_ids") or [])
         if entity_ids_from_semantic:
-            expanded = kg.expand_from_entities(entity_ids_from_semantic, user_id=user_id)
+            expanded = kg.expand_from_entities(
+                entity_ids_from_semantic, user_id=user_id, space_ids=_neo4j_space_ids
+            )
             memory_context = _append_graph_expansion(memory_context, expanded, store, result_ids)
+
+    # 4. Lifecycle: update usage metrics (importance, access_count, archival) for all memories we surfaced.
+    try:
+        if result_ids:
+            from memory.lifecycle import record_access
+            record_access(store, list(result_ids))
+    except Exception:
+        # Lifecycle updates should never break retrieval.
+        pass
 
     return memory_context, semantic_results
 
@@ -185,23 +224,26 @@ def _semantic_recall(
         return []
 
 
-def _entity_recall(query: str, user_id: str, kg: Any) -> List[str]:
+def _entity_recall(
+    query: str, user_id: str, kg: Any, space_ids: Optional[List[str]] = None
+) -> List[str]:
     """NER on query → resolve against graph → expand → memory_ids."""
     if not kg or not user_id:
         return []
     try:
         from memory.entity_extractor import EntityExtractor
         entities = EntityExtractor().extract_from_query(query)
-        # pdb.set_trace()
         if entities:
             resolved = kg.resolve_entity_candidates(user_id, entities, fuzzy_threshold=0.85)
             if resolved:
-                expanded = kg.expand_from_entities(resolved, user_id=user_id, depth=1)
+                expanded = kg.expand_from_entities(
+                    resolved, user_id=user_id, depth=1, space_ids=space_ids
+                )
                 return expanded.get("memory_ids", [])
         # Fallback: stop-word heuristic
         tokens = [w for w in re.findall(r"\b\w+\b", query) if w.lower() not in _STOP_WORDS and len(w) > 1]
         if tokens:
-            return kg.get_memory_ids_for_entity_names(user_id, tokens)
+            return kg.get_memory_ids_for_entity_names(user_id, tokens, space_ids=space_ids)
     except Exception as e:
         log_error(f"MemoryRetriever: entity recall failed: {e}")
     return []

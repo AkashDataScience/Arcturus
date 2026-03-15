@@ -1,20 +1,24 @@
+import yaml
 import json
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import yaml
 from PIL import Image
 
 from core.json_parser import parse_llm_json
 from core.model_manager import ModelManager
 from core.utils import log_error, log_step
 from ops.tracing import set_span_context
+from ops.cost import ConfigurableCostCalculator
 from core.episodic_memory import *
-from PIL import Image
-from datetime import datetime
-import os
+from safety.audit import log_safety_event
+from safety.canary import attach_canary_to_context, detect_canary_leak, generate_canary
+from safety.input_scanner import scan_input
+from safety.jailbreak import detect_jailbreak
+from safety.policy_engine import PolicyEngine
+from safety.instruction_hierarchy import enforce_hierarchy
 
 class AgentRunner:
     def __init__(self, multi_mcp):
@@ -22,30 +26,19 @@ class AgentRunner:
         # Config loading is now handled by core.bootstrap and AgentRegistry
         # We lazy-load on first run if needed.
     
-    def calculate_cost(self, input_text: str, output_text: str) -> dict:
-        """Calculate cost and token usage"""
-        # Approximate tokens = words * 1.5
-        input_words = len(input_text.split()) if input_text else 0
-        output_words = len(output_text.split()) if output_text else 0
-        
-        input_tokens = int(input_words * 1.5)
-        output_tokens = int(output_words * 1.5)
-        
-        # Cost per million tokens
-        input_cost_per_million = 0.1  # $0.1 per 1M input tokens
-        output_cost_per_million = 0.4  # $0.4 per 1M output tokens
-        
-        input_cost = (input_tokens / 1_000_000) * input_cost_per_million
-        output_cost = (output_tokens / 1_000_000) * output_cost_per_million
-        
-        total_cost = input_cost + output_cost
-        
-        return {
-            "cost": total_cost,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": input_tokens + output_tokens
-        }
+    def calculate_cost(
+        self,
+        input_text: str,
+        output_text: str,
+        model_key: str = "gemini-2.5-flash",
+        provider: str = "gemini",
+    ) -> dict:
+        """Calculate cost and token usage via ConfigurableCostCalculator. Fallback: word-based estimate."""
+        input_tokens = max(0, len(input_text or "") // 4)
+        output_tokens = max(0, len(output_text or "") // 4)
+        calculator = ConfigurableCostCalculator()
+        result = calculator.compute(input_tokens, output_tokens, model_key, provider)
+        return result.to_dict()
 
     async def run_agent(self, agent_type: str, input_data: dict, image_path: Optional[str] = None, use_system2: bool = False) -> dict:
         """Run a specific agent with input data and optional image. use_system2=True enables Reasoning Loop."""
@@ -147,7 +140,7 @@ class AgentRunner:
                         else:
                             # Fallback for non-MCP tools
                             tool_descriptions.append(f"- `{getattr(tool, 'name', 'tool')}` # {getattr(tool, 'description', 'No description')}")
-                    
+                            
                     tools_text = "\n\n### Available Tools\n\n" + "\n".join(tool_descriptions)
 
                 # 3. Build context (Date, Preferences, Registry)
@@ -175,11 +168,8 @@ class AgentRunner:
                     for name, desc in agents_dict.items():
                         clean_desc = desc.strip()
                         if "\n" in clean_desc:
-                            lines = clean_desc.split("\n")
-                            formatted_desc = lines[0] + "\n" + "\n".join([f"  {line}" for line in lines[1:]])
-                            desc_lines.append(f"* **{name}**: {formatted_desc}")
-                        else:
-                            desc_lines.append(f"* **{name}**: {clean_desc}")
+                            clean_desc = clean_desc.split('\n')[0].strip()
+                        desc_lines.append(f"- {name}: {clean_desc}")
                     desc_str = "\n".join(desc_lines)
                     prompt_template = prompt_template.replace("{available_agents_enum}", enum_str)
                     prompt_template = prompt_template.replace("{available_agents_description}", desc_str)
@@ -193,37 +183,38 @@ class AgentRunner:
                         # Handle different input key possibilities
                         query = input_data.get("task") or input_data.get("original_query") or ""
                         if query:
-                            log_step(f"🧠 Searching episodic memory for: '{query[:50]}...'", symbol="🔍")
-                            past_episodes = search_episodes(query, limit=2)
-                            if past_episodes:
-                                episodic_context = "\n\n## Relevant Past Experiences (Recipes)\n"
-                                episodic_context += "Use these successful past workflows as inspiration for your new plan:\n"
-                                for ep in past_episodes:
-                                    steps = " -> ".join([n.get("agent", "??") for n in ep.get("nodes", []) if n.get("agent") != "System"])
-                                    episodic_context += f"- **Task**: \"{ep['original_query']}\"\n  **Workflow**: {steps}\n"
-                                log_step(f"📈 Found {len(past_episodes)} relevant past episodes.", symbol="💡")
+                            episodes = search_episodes(query, limit=3)
+                            if episodes:
+                                episode_summaries = [f"- {ep['summary']}" for ep in episodes]
+                                episodic_context = f"\n---\n## Relevant Past Experience\n" + "\n".join(episode_summaries) + "\n---\n"
                     except Exception as e:
                         log_error(f"Episodic retrieval hook failed: {e}")
 
-                # 3d. Inject Factual Memory (Semantic Injection)
+                # 3d. Inject Factual Memory (Semantic Injection) - Combined approach
                 factual_context = ""
-                if agent_type in ["SummarizerAgent", "RetrieverAgent", "CoderAgent"]:
-                    try:
-                        from memory.mem0_store import MemoryStore
-                        store = MemoryStore()
-                        query = input_data.get("task") or input_data.get("original_query") or ""
-                        if query:
-                            facts = store.search(query, limit=3)
-                            if facts:
-                                factual_context = "\n\n## Memories of User Preferences & Facts\n"
-                                factual_context += "Use these stored facts to inform your response:\n"
-                                for f in facts:
-                                    if isinstance(f, dict):
-                                        factual_context += f"- {f.get('memory', f.get('content', str(f)))}\n"
-                                    else:
-                                        factual_context += f"- {str(f)}\n"
-                    except Exception as e:
-                        log_error(f"Factual memory hook failed: {e}")
+                try:
+                    query = input_data.get("task") or input_data.get("original_query") or ""
+                    if query:
+                        # Try P11 Mnemo approach first (master)
+                        try:
+                            from memory.mnemo_retrieval import retrieve_context
+                            mnemo_results = retrieve_context(query, limit=5)
+                            if mnemo_results:
+                                fact_summaries = [f"- {result['content'][:200]}..." for result in mnemo_results if result.get('content')]
+                                if fact_summaries:
+                                    factual_context = f"\n---\n## Relevant Context\n" + "\n".join(fact_summaries) + "\n---\n"
+                        except ImportError:
+                            # Fall back to HEAD approach if mnemo_retrieval not available
+                            if agent_type in ["SummarizerAgent", "RetrieverAgent", "CoderAgent"]:
+                                from memory.mem0_store import MemoryStore
+                                store = MemoryStore()
+                                memories = store.search(query, limit=5)
+                                if memories:
+                                    memory_summaries = [f"- {mem.get('memory', '')}" for mem in memories if mem.get('memory')]
+                                    if memory_summaries:
+                                        factual_context = f"\n---\n## Relevant Facts\n" + "\n".join(memory_summaries) + "\n---\n"
+                except Exception as e:
+                    log_error(f"Factual memory hook failed: {e}")
 
                 # 3e. Inject System Profile (Cortex-R settings)
                 profile_context = ""
@@ -235,7 +226,7 @@ class AgentRunner:
                 except Exception as e:
                     log_error(f"Profile injection failed: {e}")
 
-                # 4. Final Prompt Construction
+                # 4. Final Prompt Construction (with safety measures from HEAD)
                 system_prompt = f"CURRENT_DATE: {current_date}\n\n{prompt_template.strip()}{user_prefs_text}{profile_context}{episodic_context}{factual_context}"
                 tool_prompt = f"{tools_text}"
                 user_prompt = f"\n\n```json\n{json.dumps(input_data, indent=2, default=str)}\n```"
@@ -243,7 +234,6 @@ class AgentRunner:
                 # === Safety: Inject Canary Token into System Prompt ===
                 # Generate a unique canary token for this agent invocation to detect prompt leakage
                 try:
-                    from safety.canary import generate_canary
                     canary_token = generate_canary()
                     # Inject as hidden instruction that should never appear in output
                     system_prompt += f"\n\n[INTERNAL_TOKEN: {canary_token}]"
@@ -258,7 +248,6 @@ class AgentRunner:
 
                 # === Safety: Instruction Hierarchy Enforcement ===
                 try:
-                    from safety.instruction_hierarchy import enforce_hierarchy
                     system_prompt, tool_prompt, user_prompt, hierarchy_validation = enforce_hierarchy(
                         system_prompt, tool_prompt, user_prompt, strict_mode=False
                     )
@@ -266,11 +255,10 @@ class AgentRunner:
                         log_error(f"Instruction hierarchy violations detected: {hierarchy_validation['violations']}")
                         # Log safety event for violations
                         try:
-                            from safety.audit import log_safety_event
                             log_safety_event(
                                 "instruction_hierarchy_violation",
-                                context={"agent_type": agent_type, "violations": hierarchy_validation["violations"]},
-                                metadata={"action": hierarchy_validation.get("action", "sanitize")}
+                                context={"agent_type": agent_type, "session_id": session_id},
+                                metadata={"violations": hierarchy_validation["violations"], "strict_mode": False}
                             )
                         except Exception:
                             pass
@@ -348,8 +336,6 @@ class AgentRunner:
                     
                 log_step(f"🟩 {agent_type} finished", payload={"output_keys": list(output.keys()) if isinstance(output, dict) else "raw_string"}, symbol="🟩")
 
-                # import pdb; pdb.set_trace()
-                
                 # Calculate input text for costing
                 input_text = str(input_data)
                 
@@ -357,7 +343,9 @@ class AgentRunner:
                 output_text = str(output)
                 
                 # Calculate cost and tokens
-                cost_data = self.calculate_cost(input_text, output_text)
+                cost_data = self.calculate_cost(
+                    input_text, output_text, model_key=model_name, provider=model_provider
+                )
                 
                 # Add cost data and model info to result
                 if isinstance(output, dict):
@@ -394,4 +382,3 @@ class AgentRunner:
             bootstrap_agents()
             agents = list(AgentRegistry.list_agents().keys())
         return agents
-
