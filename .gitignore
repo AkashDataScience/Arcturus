@@ -97,6 +97,9 @@ S15A.egg-info/
 # Studio runtime output (generated PPTX artifacts)
 /studio/
 
+# Auto-generated skill registry (rebuilt on every startup by SkillManager)
+core/skills/registry.json
+
 # Added by Arcturus
 .arcturus/
 .arcturus
