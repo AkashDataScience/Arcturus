@@ -16,6 +16,7 @@ from pathlib import Path
 import click
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from marketplace.sdk.templates import get_template, TEMPLATES_DIR as DEFAULT_TEMPLATES_DIR
+from marketplace.version_manager import VersionManager
 
 logger = logging.getLogger("bazaar.sdk")
 
@@ -67,6 +68,11 @@ def main() -> None:
 @main.group()
 def skill() -> None:
     """Commands for creating, testing, and publishing skills."""
+
+
+@main.group()
+def admin() -> None:
+    """Admin and moderation commands for the marketplace."""
 
 
 @skill.command("create")
@@ -254,6 +260,263 @@ def doc_skill(name: str, skills_root: str, out_root: str) -> None:
     except (FileNotFoundError, ValueError) as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Version Management Commands
+# ---------------------------------------------------------------------------
+
+@skill.command("rollback")
+@click.argument("name")
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def rollback_skill(name: str, skills_root: str) -> None:
+    """
+    Roll back skill NAME to its previous version.
+
+    Requires at least one prior version in the version ledger.
+    """
+    vm = VersionManager(skills_dir=Path(skills_root))
+    result = vm.rollback(name)
+
+    if result.success:
+        click.echo(
+            f"\n⏪  Rolled back '{name}': "
+            f"v{result.previous_version} → v{result.restored_version}\n"
+        )
+    else:
+        click.echo(f"Error: {result.message}", err=True)
+        sys.exit(1)
+
+
+@skill.command("pin")
+@click.argument("name")
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def pin_skill(name: str, skills_root: str) -> None:
+    """
+    Pin skill NAME at its current version to prevent upgrades.
+    """
+    vm = VersionManager(skills_dir=Path(skills_root))
+    result = vm.pin(name)
+
+    if result.success:
+        click.echo(f"\n📌  {result.message}\n")
+    else:
+        click.echo(f"Error: {result.message}", err=True)
+        sys.exit(1)
+
+
+@skill.command("unpin")
+@click.argument("name")
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def unpin_skill(name: str, skills_root: str) -> None:
+    """
+    Un-pin skill NAME to allow upgrades again.
+    """
+    vm = VersionManager(skills_dir=Path(skills_root))
+    result = vm.unpin(name)
+
+    if result.success:
+        click.echo(f"\n🔓  {result.message}\n")
+    else:
+        click.echo(f"Error: {result.message}", err=True)
+        sys.exit(1)
+
+
+@skill.command("upgrade")
+@click.argument("name")
+@click.option("--source", required=True, type=click.Path(exists=True),
+              help="Path to the directory containing the new skill version.")
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def upgrade_skill(name: str, source: str, skills_root: str) -> None:
+    """
+    Upgrade skill NAME to a new version from --source directory.
+
+    Archives the current version before installing the new one.
+    """
+    from marketplace.installer import SkillInstaller
+    from marketplace.registry import SkillRegistry
+
+    skills_path = Path(skills_root)
+    registry = SkillRegistry(skills_dir=skills_path)
+    registry.discover_skills()
+    installer = SkillInstaller(registry=registry)
+
+    vm = VersionManager(skills_dir=skills_path)
+    result = vm.upgrade(name, source_dir=Path(source), installer=installer)
+
+    if result.success:
+        click.echo(
+            f"\n⬆️  Upgraded '{name}': "
+            f"v{result.previous_version} → v{result.restored_version}\n"
+        )
+    else:
+        click.echo(f"Error: {result.message}", err=True)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Admin Management Commands
+# ---------------------------------------------------------------------------
+
+@admin.command("status")
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def admin_status(skills_root: str) -> None:
+    """
+    Show a high-level overview of the marketplace.
+
+    Displays skill counts, moderation queue size, and abuse events.
+    """
+    from marketplace.admin import AdminDashboard, format_status_summary
+
+    dashboard = AdminDashboard(skills_dir=Path(skills_root))
+    summary = dashboard.get_status_summary()
+    click.echo(format_status_summary(summary))
+
+
+@admin.command("info")
+@click.argument("name")
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def admin_info(name: str, skills_root: str) -> None:
+    """
+    Show detailed info for skill NAME.
+
+    Combines version history, moderation record, and abuse events.
+    """
+    from marketplace.admin import AdminDashboard, format_skill_report
+
+    dashboard = AdminDashboard(skills_dir=Path(skills_root))
+    report = dashboard.get_skill_report(name)
+    click.echo(format_skill_report(report))
+
+
+@admin.command("queue")
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def admin_queue(skills_root: str) -> None:
+    """
+    Show all flagged skills awaiting review.
+    """
+    from marketplace.admin import AdminDashboard, format_moderation_queue
+
+    dashboard = AdminDashboard(skills_dir=Path(skills_root))
+    queue = dashboard.get_moderation_queue()
+    click.echo(format_moderation_queue(queue))
+
+
+@admin.command("flag")
+@click.argument("name")
+@click.option("--reason", required=True,
+              type=click.Choice(
+                  ["community_report", "suspicious_code", "policy_violation",
+                   "excessive_permissions", "copycat"],
+                  case_sensitive=False),
+              help="Reason for flagging.")
+@click.option("--detail", default="", help="Free-text explanation.")
+@click.option("--moderator", default="admin", show_default=True)
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def admin_flag(name: str, reason: str, detail: str,
+               moderator: str, skills_root: str) -> None:
+    """Flag skill NAME for moderation review."""
+    from marketplace.admin import AdminDashboard
+    from marketplace.moderation import FlagReason
+
+    dashboard = AdminDashboard(skills_dir=Path(skills_root))
+    result = dashboard.flag_skill(
+        name, FlagReason(reason), reporter=moderator, detail=detail,
+    )
+    if result.success:
+        click.echo(f"\n🚩  {result.message}\n")
+    else:
+        click.echo(f"Error: {result.message}", err=True)
+        sys.exit(1)
+
+
+@admin.command("review")
+@click.argument("name")
+@click.option("--moderator", required=True, help="Moderator starting the review.")
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def admin_review(name: str, moderator: str, skills_root: str) -> None:
+    """Start reviewing flagged skill NAME."""
+    from marketplace.admin import AdminDashboard
+
+    dashboard = AdminDashboard(skills_dir=Path(skills_root))
+    result = dashboard.start_review(name, moderator)
+    if result.success:
+        click.echo(f"\n🔍  {result.message}\n")
+    else:
+        click.echo(f"Error: {result.message}", err=True)
+        sys.exit(1)
+
+
+@admin.command("approve")
+@click.argument("name")
+@click.option("--moderator", required=True, help="Moderator approving the skill.")
+@click.option("--reason", default="Approved after review", show_default=True)
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def admin_approve(name: str, moderator: str, reason: str,
+                  skills_root: str) -> None:
+    """Approve skill NAME — restores it to active status."""
+    from marketplace.admin import AdminDashboard
+
+    dashboard = AdminDashboard(skills_dir=Path(skills_root))
+    result = dashboard.approve_skill(name, moderator, reason)
+    if result.success:
+        click.echo(f"\n✅  {result.message}\n")
+    else:
+        click.echo(f"Error: {result.message}", err=True)
+        sys.exit(1)
+
+
+@admin.command("suspend")
+@click.argument("name")
+@click.option("--moderator", required=True, help="Moderator suspending the skill.")
+@click.option("--reason", default="Suspended after review", show_default=True)
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def admin_suspend(name: str, moderator: str, reason: str,
+                  skills_root: str) -> None:
+    """Suspend skill NAME — permanently blocks installation."""
+    from marketplace.admin import AdminDashboard
+
+    dashboard = AdminDashboard(skills_dir=Path(skills_root))
+    result = dashboard.suspend_skill(name, moderator, reason)
+    if result.success:
+        click.echo(f"\n🚫  {result.message}\n")
+    else:
+        click.echo(f"Error: {result.message}", err=True)
+        sys.exit(1)
+
+
+@admin.command("abuse-report")
+@click.option("--skill", "skill_name", default=None,
+              help="Filter by skill name.")
+@click.option("--type", "event_type", default=None,
+              type=click.Choice(
+                  ["rate_limited", "quota_exceeded", "circuit_tripped",
+                   "circuit_recovered", "error_recorded"],
+                  case_sensitive=False),
+              help="Filter by event type.")
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def admin_abuse_report(skill_name: str, event_type: str,
+                       skills_root: str) -> None:
+    """Show abuse events (rate limits, circuit trips, errors)."""
+    from marketplace.admin import AdminDashboard, format_abuse_report
+    from marketplace.abuse import AbuseEventType
+
+    dashboard = AdminDashboard(skills_dir=Path(skills_root))
+    et = AbuseEventType(event_type) if event_type else None
+    events = dashboard.get_abuse_report(skill_name=skill_name, event_type=et)
+    click.echo(format_abuse_report(events))
+
+
+@admin.command("reset-abuse")
+@click.argument("name")
+@click.option("--skills-root", default=str(SKILLS_ROOT), show_default=True)
+def admin_reset_abuse(name: str, skills_root: str) -> None:
+    """Reset abuse counters for skill NAME (keeps audit trail)."""
+    from marketplace.admin import AdminDashboard
+
+    dashboard = AdminDashboard(skills_dir=Path(skills_root))
+    dashboard.reset_abuse(name)
+    click.echo(f"\n🔄  Abuse counters reset for '{name}' (audit trail preserved)\n")
 
 
 # ---------------------------------------------------------------------------

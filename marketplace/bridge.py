@@ -14,6 +14,7 @@ from marketplace.loader import SkillLoader
 from marketplace.skill_base import ToolDefinition
 from marketplace.trust import TrustPolicy, TrustLevel
 from marketplace.sandbox import SandboxedExecutor
+from marketplace.abuse import AbuseController
 
 logger = logging.getLogger("bazaar")
 
@@ -26,11 +27,15 @@ class MarketplaceBridge:
     managing three separate objects.
     """
     def __init__(self, skills_dir: Optional[Path] = None, trust_policy: Optional[TrustPolicy] = None):
-        self.registry = SkillRegistry(skills_dir=skills_dir)
+        # We need a resolved Path so we can pass it consistently
+        actual_skills_dir = skills_dir or Path("marketplace/skills").resolve()
+        
+        self.registry = SkillRegistry(skills_dir=actual_skills_dir)
         self.installer = SkillInstaller(registry=self.registry)
         self.loader = SkillLoader(registry=self.registry)
         self.policy = trust_policy or TrustPolicy()
         self.executor = SandboxedExecutor()
+        self.abuse = AbuseController(skills_dir=actual_skills_dir)
         self._initialized = False
 
     def initialize(self):
@@ -51,8 +56,16 @@ class MarketplaceBridge:
     def check_policy(self, manifest, skill_dir=None, public_key_path=None):
         """Evaluate a skill against the trust policy before install."""
         return self.policy.evaluate(manifest, skill_dir, public_key_path)
+
+    def _find_skill_for_tool(self, tool_name: str) -> Optional[str]:
+        """Helper to find which skill owns a specific tool."""
+        self.initialize()
+        for manifest in self.registry.list_skills():
+            for tool in manifest.tools:
+                if tool.name == tool_name:
+                    return manifest.name
+        return None
         
-    
     def resolve_tool(self, tool_name: str, arguments: Dict[str, Any] = None) -> Optional[Any]:
         """
         Try to resolve a tool call through marketplace skills.
@@ -68,8 +81,20 @@ class MarketplaceBridge:
         
         if self.loader.get_tool(tool_name) is None:
             return None  # Not a marketplace tool
+            
+        skill_name = self._find_skill_for_tool(tool_name)
+        if skill_name:
+            self.abuse.pre_call_check(skill_name, tool_name)
         
-        return self.loader.resolve_tool_call(tool_name, arguments or {})
+        try:
+            result = self.loader.resolve_tool_call(tool_name, arguments or {})
+            if skill_name:
+                self.abuse.record_success(skill_name, tool_name)
+            return result
+        except Exception as e:
+            if skill_name:
+                self.abuse.record_error(skill_name, tool_name, str(e))
+            raise
 
     def get_tool_definitions(self) -> List[ToolDefinition]:
         """
