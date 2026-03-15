@@ -14,8 +14,10 @@
     "image_captioning": "gemma3:4b",
     "memory_extraction": "gemma3:4b",
     "insights_provider": "ollama",
-    "entity_extraction": "gemma3:4b"
+    "entity_extraction": "gemma3:4b",
+    "file_extraction": "google/gemini-2.5-flash"
   },
+  "file_extraction_provider": "openrouter",
   "rag": {
     "chunk_size": 256,
     "chunk_overlap": 40,

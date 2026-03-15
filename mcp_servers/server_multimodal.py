@@ -121,19 +121,37 @@ async def analyze_data_file(file_path: str, prompt: str) -> str:
     if not os.path.exists(file_path):
         return f"[Error] Data file not found at path: {file_path}"
     
-    if not file_path.lower().endswith('.csv'):
-        return f"[Error] Only .csv files are currently supported. Please provide a CSV file."
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in ('.csv', '.xlsx', '.xls'):
+        return f"[Error] Only .csv and .xlsx/.xls files are supported. Got: {ext}"
 
     try:
         columns = defaultdict(list)
         row_count = 0
-        
-        with open(file_path, mode='r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                row_count += 1
-                for key, val in row.items():
-                    columns[key].append(val)
+
+        if ext in ('.xlsx', '.xls'):
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(file_path, data_only=True)
+                ws = wb.active
+                headers = None
+                for i, row in enumerate(ws.iter_rows(values_only=True)):
+                    if i == 0:
+                        headers = [str(c) if c is not None else f"col_{j}" for j, c in enumerate(row)]
+                        continue
+                    row_count += 1
+                    for j, val in enumerate(row):
+                        key = headers[j] if j < len(headers) else f"col_{j}"
+                        columns[key].append(str(val) if val is not None else "")
+            except ImportError:
+                return "[Error] openpyxl is not installed. Cannot read Excel files."
+        else:
+            with open(file_path, mode='r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    row_count += 1
+                    for key, val in row.items():
+                        columns[key].append(val)
         
         # Generate stats
         stats_summary = []
@@ -363,19 +381,37 @@ async def analyze_data_file(file_path: str, prompt: str) -> str:
     if not os.path.exists(file_path):
         return f"[Error] Data file not found at path: {file_path}"
     
-    if not file_path.lower().endswith('.csv'):
-        return f"[Error] Only .csv files are currently supported. Please provide a CSV file."
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in ('.csv', '.xlsx', '.xls'):
+        return f"[Error] Only .csv and .xlsx/.xls files are supported. Got: {ext}"
 
     try:
         columns = defaultdict(list)
         row_count = 0
-        
-        with open(file_path, mode='r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                row_count += 1
-                for key, val in row.items():
-                    columns[key].append(val)
+
+        if ext in ('.xlsx', '.xls'):
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(file_path, data_only=True)
+                ws = wb.active
+                headers = None
+                for i, row in enumerate(ws.iter_rows(values_only=True)):
+                    if i == 0:
+                        headers = [str(c) if c is not None else f"col_{j}" for j, c in enumerate(row)]
+                        continue
+                    row_count += 1
+                    for j, val in enumerate(row):
+                        key = headers[j] if j < len(headers) else f"col_{j}"
+                        columns[key].append(str(val) if val is not None else "")
+            except ImportError:
+                return "[Error] openpyxl is not installed. Cannot read Excel files."
+        else:
+            with open(file_path, mode='r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    row_count += 1
+                    for key, val in row.items():
+                        columns[key].append(val)
         
         # Generate stats
         stats_summary = []
@@ -605,19 +641,37 @@ async def analyze_data_file(file_path: str, prompt: str) -> str:
     if not os.path.exists(file_path):
         return f"[Error] Data file not found at path: {file_path}"
     
-    if not file_path.lower().endswith('.csv'):
-        return f"[Error] Only .csv files are currently supported. Please provide a CSV file."
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in ('.csv', '.xlsx', '.xls'):
+        return f"[Error] Only .csv and .xlsx/.xls files are supported. Got: {ext}"
 
     try:
         columns = defaultdict(list)
         row_count = 0
-        
-        with open(file_path, mode='r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                row_count += 1
-                for key, val in row.items():
-                    columns[key].append(val)
+
+        if ext in ('.xlsx', '.xls'):
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(file_path, data_only=True)
+                ws = wb.active
+                headers = None
+                for i, row in enumerate(ws.iter_rows(values_only=True)):
+                    if i == 0:
+                        headers = [str(c) if c is not None else f"col_{j}" for j, c in enumerate(row)]
+                        continue
+                    row_count += 1
+                    for j, val in enumerate(row):
+                        key = headers[j] if j < len(headers) else f"col_{j}"
+                        columns[key].append(str(val) if val is not None else "")
+            except ImportError:
+                return "[Error] openpyxl is not installed. Cannot read Excel files."
+        else:
+            with open(file_path, mode='r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    row_count += 1
+                    for key, val in row.items():
+                        columns[key].append(val)
         
         # Generate stats
         stats_summary = []

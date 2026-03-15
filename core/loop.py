@@ -276,6 +276,27 @@ class AgentLoop4:
                 self.context.plan_graph.graph['globals_schema'].update(globals_schema)
                 self.context.plan_graph.graph['research_mode'] = research_mode
                 self.context.plan_graph.graph['focus_mode'] = focus_mode
+
+                # Inject uploaded file content into globals_schema so DAG nodes
+                # can resolve file references in their `reads` fields.
+                # The planner may reference files as "filename.jpg" or "{session_id}_filename.jpg".
+                if uploaded_files:
+                    gs = self.context.plan_graph.graph['globals_schema']
+                    for uf in uploaded_files:
+                        fname = uf.get("name", "")
+                        file_data = {
+                            "content": uf.get("content", ""),
+                            "content_type": uf.get("content_type", "unknown"),
+                            "name": fname,
+                            "path": uf.get("path", ""),
+                        }
+                        # Store under original filename
+                        gs[fname] = file_data
+                        # Store under session-prefixed key (planner often uses this)
+                        if session_id:
+                            gs[f"{session_id}_{fname}"] = file_data
+                    log_step(f"📎 Stored {len(uploaded_files)} file(s) in globals_schema for DAG resolution", symbol="📂")
+
                 self.context._save_session()
                 log_step("✅ Session initialized with Query processing", symbol="🌱")
             except Exception as e:
@@ -304,6 +325,46 @@ class AgentLoop4:
                     file_profiles = file_result["output"]
                     self.context.set_file_profiles(file_profiles)
 
+            # Phase 1.5: Build effective query with file content for planner
+            # If files were uploaded and content extracted, append it so the planner
+            # can reason about actual file content rather than just filenames
+            effective_query = query
+            if uploaded_files:
+                file_sections = []
+                for uf in uploaded_files:
+                    content = uf.get("content", "[no content extracted]")
+                    ctype = uf.get("content_type", "unknown")
+                    name = uf.get("name", "unknown")
+                    # Truncate per file to keep planner context manageable
+                    truncated = content[:20000] if isinstance(content, str) else str(content)[:20000]
+                    file_sections.append(f"### File: {name} (type: {ctype})\n{truncated}")
+                effective_query = query + "\n\n--- UPLOADED FILE CONTENTS ---\n" + "\n\n".join(file_sections) + "\n--- END FILE CONTENTS ---"
+                log_step(f"📎 Injected {len(uploaded_files)} file(s) content into planner query", symbol="📄")
+
+            # Phase 1.6: Classify query intent (internal vs external)
+            # Helps the planner decide whether to use memory or web search
+            import re as _re
+            _INTERNAL_PATTERNS = [
+                r"\bwhat did (we|i|you)\b", r"\bour (previous|last|earlier)\b",
+                r"\blast (time|session|conversation|discussion)\b",
+                r"\bremember when\b", r"\bdo you (remember|recall)\b",
+                r"\bprevious(ly)?\b", r"\bearlier\b", r"\bbefore\b",
+                r"\bwe (discussed|talked|agreed|decided)\b",
+                r"\bmy (preference|setting|note)\b", r"\bpast (research|work|analysis)\b",
+            ]
+            query_lower = query.lower()
+            _has_internal_signal = any(_re.search(p, query_lower) for p in _INTERNAL_PATTERNS)
+            _has_memory = bool(memory_context and memory_context.strip())
+
+            if _has_internal_signal and _has_memory:
+                query_intent = "internal"
+                log_step("🧠 Query classified as INTERNAL — memory context will be prioritized", symbol="🔍")
+            elif _has_internal_signal and not _has_memory:
+                query_intent = "internal_empty"
+                log_step("🧠 Query looks INTERNAL but no memory found — will search web as fallback", symbol="🔍")
+            else:
+                query_intent = "external"
+
             # Phase 2: Planning and Execution Loop
             try:
                 while True:
@@ -322,10 +383,11 @@ class AgentLoop4:
                         return await self.agent_runner.run_agent(
                             "PlannerAgent",
                             {
-                                "original_query": query,
+                                "original_query": effective_query,
                                 "planning_strategy": self.strategy_name,
                                 "research_mode": research_mode,
                                 "focus_mode": focus_mode,
+                                "query_intent": query_intent,
                                 "globals_schema": self.context.plan_graph.graph.get("globals_schema", {}),
                                 "file_manifest": file_manifest,
                                 "file_profiles": file_profiles,
@@ -405,6 +467,86 @@ class AgentLoop4:
                             )
                         )
                         attach_plan_graph_to_span(plan_span, plan_result)
+
+                    # ===== POST-PLAN MULTIMODAL COMPLIANCE ENFORCEMENT =====
+                    # If files were uploaded, ensure the planner didn't assign
+                    # RetrieverAgent for tasks that should use ThinkerAgent/CoderAgent.
+                    # This is a structural enforcement — the planner prompt is advisory
+                    # but LLMs sometimes ignore it.
+                    if file_manifest and plan_result.get("output", {}).get("plan_graph"):
+                        plan_nodes = plan_result["output"]["plan_graph"].get("nodes", [])
+                        # Build a set of uploaded filenames and content types for matching
+                        uploaded_names = {f.get("name", "").lower() for f in file_manifest}
+                        # Content types from uploaded_files (more specific)
+                        content_type_map = {}
+                        if uploaded_files:
+                            for uf in uploaded_files:
+                                content_type_map[uf.get("name", "").lower()] = uf.get("content_type", "unknown")
+
+                        data_types = {"csv", "spreadsheet", "excel"}
+
+                        rewrites = 0
+                        for node in plan_nodes:
+                            if node.get("agent") != "RetrieverAgent":
+                                continue
+
+                            prompt_lower = node.get("agent_prompt", "").lower()
+                            desc_lower = node.get("description", "").lower()
+                            combined = prompt_lower + " " + desc_lower
+
+                            # Check if this RetrieverAgent task references uploaded files
+                            references_upload = False
+                            matched_content_type = None
+
+                            # Check for uploaded file name references
+                            for fname in uploaded_names:
+                                if fname and fname in combined:
+                                    references_upload = True
+                                    matched_content_type = content_type_map.get(fname)
+                                    break
+
+                            # Check for upload markers in prompt
+                            if not references_upload:
+                                upload_markers = [
+                                    "uploaded file", "uploaded image", "uploaded document",
+                                    "file content", "image description", "extracted content",
+                                    "the image", "the chart", "the pdf", "the document",
+                                    "the spreadsheet", "the csv", "analyze the file",
+                                    "uploaded", "file_manifest"
+                                ]
+                                for marker in upload_markers:
+                                    if marker in combined:
+                                        references_upload = True
+                                        break
+
+                            if not references_upload:
+                                continue
+
+                            # Determine correct agent based on content type
+                            if matched_content_type and matched_content_type in data_types:
+                                new_agent = "CoderAgent"
+                            else:
+                                new_agent = "ThinkerAgent"
+
+                            # If no specific match, infer from uploaded content types
+                            if not matched_content_type and uploaded_files:
+                                for uf in uploaded_files:
+                                    ct = uf.get("content_type", "")
+                                    if ct in data_types:
+                                        new_agent = "CoderAgent"
+                                        break
+
+                            old_agent = node["agent"]
+                            node["agent"] = new_agent
+                            rewrites += 1
+                            log_step(
+                                f"🔧 Plan compliance: Rewrote {node['id']} from {old_agent} → {new_agent} "
+                                f"(uploaded file content already in query context)",
+                                symbol="📎"
+                            )
+
+                        if rewrites > 0:
+                            log_step(f"📎 Multimodal enforcement: rewrote {rewrites} node(s) for uploaded file handling", symbol="✅")
 
                     if self.context.stop_requested:
                         break

@@ -1,11 +1,13 @@
 # Runs Router - Handles agent run execution, listing, and management
 import asyncio
 import json
+import os
+import re
 from pathlib import Path
 from datetime import datetime
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Body
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Body, UploadFile, File
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from ops.tracing import run_span, agent_execute_node_span
 from opentelemetry.trace import Status, StatusCode
 from shared.state import (
@@ -46,6 +48,7 @@ class RunRequest(BaseModel):
     source: str = "web" # "web" or "voice"
     stream: bool = False # Whether the caller expects a streaming response
     space_id: Optional[str] = None  # Phase 3C: optional space to scope session and retrieval
+    file_paths: List[str] = []  # Paths to uploaded files for content extraction
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -104,6 +107,223 @@ async def process_resume(run_id: str, session_path: Path):
                 del active_loops[run_id]
 
 
+# === File Content Extraction Helpers ===
+
+def _detect_file_paths_in_query(query: str) -> List[str]:
+    """Extract file paths from query text for backward compatibility."""
+    patterns = [
+        r'(?:file at this location|file at|file:)\s*["\']?([/\\][\w./\\~ -]+\.\w+)',
+        r'([/\\][\w./\\~ -]+\.(?:pdf|png|jpg|jpeg|webp|gif|csv|xlsx|docx|txt))\b'
+    ]
+    paths = []
+    for p in patterns:
+        for m in re.finditer(p, query, re.IGNORECASE):
+            path = m.group(1).strip()
+            if os.path.exists(path) and path not in paths:
+                paths.append(path)
+    return paths
+
+
+def _get_extraction_prompt(ext: str) -> str:
+    """Return the extraction prompt based on file extension."""
+    if ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+        return "Describe this image in detail. Extract all text, data, charts, diagrams, and visual information present. Be thorough and precise."
+    elif ext == ".pdf":
+        return "Extract and summarize the full content of this PDF document. Include all text, tables, figures, and key information."
+    return "Analyze this file and extract all meaningful content, data, and information."
+
+
+async def _extract_via_openrouter(file_path: str) -> str:
+    """Use OpenRouter multimodal API to analyze a file (image/PDF).
+
+    Model is configurable via settings.models.file_extraction.
+    Raises RuntimeError on failure instead of returning error strings.
+    """
+    import aiohttp
+    import base64
+    from config.settings_loader import settings
+
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError(f"OPENROUTER_API_KEY not set. Cannot analyze file: {os.path.basename(file_path)}")
+
+    model = settings.get("models", {}).get("file_extraction",
+        settings.get("agent", {}).get("default_model", "google/gemini-2.5-flash"))
+
+    ext = os.path.splitext(file_path)[1].lower().lstrip(".")
+    mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                "webp": "image/webp", "gif": "image/gif", "pdf": "application/pdf"}
+    mime = mime_map.get(ext, f"image/{ext}")
+    prompt = _get_extraction_prompt(f".{ext}")
+
+    with open(file_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+                ]}]
+            },
+            timeout=aiohttp.ClientTimeout(total=120)
+        ) as resp:
+            result = await resp.json()
+            if "choices" in result and result["choices"]:
+                content = result["choices"][0]["message"]["content"]
+                if content:
+                    return content
+            # Raise on failure so the outer handler catches it
+            error_msg = result.get("error", {}).get("message", str(result)[:200])
+            raise RuntimeError(f"OpenRouter extraction failed for {os.path.basename(file_path)}: {error_msg}")
+
+
+async def _extract_via_gemini(file_path: str) -> str:
+    """Upload file to Gemini File API and extract content natively.
+
+    Supports images, PDFs, and other Gemini-compatible file types.
+    Model is configurable via settings.models.file_extraction.
+    """
+    from config.settings_loader import settings
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(f"GEMINI_API_KEY not set. Cannot analyze file: {os.path.basename(file_path)}")
+
+    # Get model from settings (strip provider prefix for native Gemini)
+    model_id = settings.get("models", {}).get("file_extraction", "gemini-2.5-flash")
+    if "/" in model_id:
+        model_id = model_id.split("/", 1)[1]
+
+    ext = os.path.splitext(file_path)[1].lower()
+    prompt = _get_extraction_prompt(ext)
+
+    from google import genai
+
+    client = genai.Client(api_key=api_key)
+    uploaded_file = None
+
+    try:
+        uploaded_file = await asyncio.to_thread(client.files.upload, file=file_path)
+        print(f"  📤 Uploaded to Gemini File API: {os.path.basename(file_path)} → {uploaded_file.name}")
+
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model=model_id,
+            contents=[uploaded_file, prompt]
+        )
+
+        if response and response.text:
+            return response.text
+        raise RuntimeError(f"Gemini returned empty response for {os.path.basename(file_path)}")
+
+    finally:
+        if uploaded_file:
+            try:
+                await asyncio.to_thread(client.files.delete, name=uploaded_file.name)
+            except Exception:
+                pass
+
+
+async def _extract_multimodal_file(file_path: str) -> str:
+    """Extract content from an image or PDF using the configured provider.
+
+    Provider is determined by settings.file_extraction_provider:
+      - "openrouter" (default): Uses OpenRouter API with OPENROUTER_API_KEY
+      - "gemini": Uses Gemini File API with GEMINI_API_KEY
+    """
+    from config.settings_loader import settings
+    provider = settings.get("file_extraction_provider", "openrouter")
+
+    if provider == "gemini":
+        return await _extract_via_gemini(file_path)
+    else:
+        return await _extract_via_openrouter(file_path)
+
+
+# Backward-compatible alias
+async def _extract_image_via_openrouter(image_path: str) -> str:
+    """Backward-compatible wrapper — routes to configured provider."""
+    return await _extract_multimodal_file(image_path)
+
+
+# File types that support multimodal extraction (image/PDF)
+MULTIMODAL_TYPES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf"}
+
+
+async def _extract_file_content(file_paths: List[str]) -> tuple:
+    """
+    Extract content from uploaded files.
+    Returns (file_manifest, uploaded_files) for the agent loop.
+    - Images & PDFs: OpenRouter or Gemini (configurable via settings.file_extraction_provider)
+    - CSV/text: Direct file read
+    - Excel: openpyxl conversion
+    """
+    file_manifest = []
+    uploaded_files = []
+
+    for path in file_paths:
+        if not os.path.exists(path):
+            print(f"⚠️ File not found, skipping: {path}")
+            continue
+
+        ext = os.path.splitext(path)[1].lower()
+        name = os.path.basename(path)
+        entry = {"path": path, "name": name, "type": ext}
+
+        try:
+            if ext in MULTIMODAL_TYPES:
+                entry["content"] = await _extract_multimodal_file(path)
+                entry["content_type"] = "image" if ext != ".pdf" else "pdf"
+                print(f"  ✅ Extracted ({entry['content_type']}): {name} ({len(entry['content'])} chars)")
+
+            elif ext == ".csv":
+                with open(path, "r", encoding="utf-8") as f:
+                    entry["content"] = f.read()[:50000]
+                entry["content_type"] = "csv"
+                print(f"  CSV read: {name} ({len(entry['content'])} chars)")
+
+            elif ext in (".xlsx", ".xls"):
+                try:
+                    import openpyxl
+                    wb = openpyxl.load_workbook(path, data_only=True)
+                    ws = wb.active
+                    rows = []
+                    for row in ws.iter_rows(values_only=True):
+                        rows.append(",".join(str(c) if c is not None else "" for c in row))
+                    entry["content"] = "\n".join(rows[:2000])
+                    entry["content_type"] = "spreadsheet"
+                    print(f"  Excel converted: {name} ({len(rows)} rows)")
+                except ImportError:
+                    entry["content"] = f"[Error] openpyxl not installed. Cannot read Excel file: {name}"
+                    entry["content_type"] = "error"
+
+            else:
+                # Try reading as text
+                with open(path, "r", encoding="utf-8") as f:
+                    entry["content"] = f.read()[:50000]
+                entry["content_type"] = "text"
+                print(f"  Text read: {name} ({len(entry['content'])} chars)")
+
+        except UnicodeDecodeError:
+            entry["content"] = f"[Binary file: {name}]"
+            entry["content_type"] = "binary"
+            print(f"  Binary file (skipped content): {name}")
+        except Exception as e:
+            entry["content"] = f"[Error extracting {name}: {str(e)}]"
+            entry["content_type"] = "error"
+            print(f"  Extraction error for {name}: {e}")
+
+        file_manifest.append({"name": name, "type": entry.get("content_type", "unknown"), "size": os.path.getsize(path)})
+        uploaded_files.append(entry)
+
+    return file_manifest, uploaded_files
+
+
 def _extract_voice_output(context) -> str:
     """
     Quickly extract TTS-friendly output from the agent context.
@@ -160,6 +380,7 @@ async def process_run(
     stream: bool = False,
     skill_id: str = None,
     space_id: Optional[str] = None,
+    file_paths: List[str] = None,
 ):
     """
     Background task: retrieve Remme memories, run agent loop, extract new memories.
@@ -204,24 +425,51 @@ async def process_run(
                             _space_id = kg.get_space_for_session(run_id)
                     except Exception:
                         pass
+                # NOTE: Do NOT pass session_id=run_id here. Each new run gets a
+                # unique run_id, and filtering by it would exclude ALL prior memories
+                # (they were stored under their own session_ids). We want cross-session
+                # recall for general queries. session_id filtering is only for session
+                # continuity (resuming an existing session), not new runs.
                 memory_context, results = retrieve(
                     query,
-                    session_id=run_id,
                     space_id=_space_id,
                 )
                 if memory_context:
-                    print(f" Remme: Injected memory context into run {run_id}")
+                    print(f"🧠 Remme: Found {len(results)} memories for run {run_id}")
+                    print(f"   Memory context length: {len(memory_context)} chars")
+                else:
+                    print(f"🧠 Remme: No matching memories found for query in run {run_id}")
             except Exception as e:
                 print(f"⚠️ Remme Retrieval Failed: {e}")
             loop = AgentLoop4(multi_mcp=multi_mcp)
             # Register the LOOP instance immediately so we can stop it
             active_loops[run_id] = loop
 
+            # FILE CONTENT EXTRACTION: Extract content from uploaded files before agent loop
+            all_file_paths = list(file_paths or [])
+            detected_paths = _detect_file_paths_in_query(query)
+            for p in detected_paths:
+                if p not in all_file_paths:
+                    all_file_paths.append(p)
+
+            file_manifest, uploaded_files = [], []
+            if all_file_paths:
+                print(f"[{run_id}] Extracting content from {len(all_file_paths)} file(s)...")
+                file_manifest, uploaded_files = await _extract_file_content(all_file_paths)
+                print(f"[{run_id}] File extraction complete: {[f['name'] for f in file_manifest]}")
+                # Clean old-style file path text from query to avoid confusing the planner
+                clean_query = re.sub(
+                    r'Please do deep research and analyze the content of the file at this location:\s*\S+',
+                    '', query
+                ).strip()
+                if clean_query:
+                    query = clean_query
+
             # Execute the agent loop (planning -> DAG execution)
             # The loop maintains its own internal context and session
             print(f"[{run_id}] MEMORY CONTEXT INJECTED:\n{memory_context}")
             try:
-                context = await loop.run(query, [], {}, [], session_id=run_id, memory_context=memory_context, research_mode=research_mode, focus_mode=focus_mode)
+                context = await loop.run(query, file_manifest, {}, uploaded_files, session_id=run_id, memory_context=memory_context, research_mode=research_mode, focus_mode=focus_mode)
             except asyncio.CancelledError:
                 span.set_status(Status(StatusCode.ERROR, "cancelled"))
                 print(f"[{run_id}] Run cancelled.")
@@ -387,7 +635,6 @@ async def process_run(
             # 3. AUTO-SAVE REPORTS TO NOTES
             try:
                 if context and context.plan_graph:
-                    import re
 
                     notes_dir = PROJECT_ROOT / "data" / "Notes" / "Arcturus"
                     notes_dir.mkdir(parents=True, exist_ok=True)
@@ -551,7 +798,6 @@ async def process_run(
 
                 # 5. RUTHLESS CLEANING: Remove typical JSON leakage if content is actually Markdown
                 if output_str:
-                    import re
                     # If the output starts and ends with {} or [], it might be a JSON dump
                     # that contains a markdown_report field.
                     if (output_str.startswith("{") and output_str.endswith("}")) or (output_str.startswith("[") and output_str.endswith("]")):
@@ -651,7 +897,8 @@ async def create_run(request: RunRequest, background_tasks: BackgroundTasks):
         process_run, run_id, request.query,
         research_mode=request.mode,
         focus_mode=request.focus_mode,
-        source=request.source, stream=request.stream, skill_id=None, space_id=request.space_id
+        source=request.source, stream=request.stream, skill_id=None, space_id=request.space_id,
+        file_paths=request.file_paths
     )
 
     return {
@@ -660,6 +907,24 @@ async def create_run(request: RunRequest, background_tasks: BackgroundTasks):
         "created_at": datetime.now().isoformat(),
         "query": request.query
     }
+
+
+@router.post("/runs/upload")
+async def upload_run_file(file: UploadFile = File(...)):
+    """Upload a file for agent analysis. Returns the server-side path."""
+    uploads_dir = PROJECT_ROOT / "data" / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    # Sanitize filename
+    safe_name = os.path.basename(file.filename or "upload")
+    # Add timestamp to avoid collisions
+    ts = int(datetime.now().timestamp())
+    target_path = uploads_dir / f"{ts}_{safe_name}"
+
+    content = await file.read()
+    target_path.write_bytes(content)
+
+    return {"path": str(target_path), "name": safe_name, "size": len(content)}
 
 
 @router.get("/runs")

@@ -2,7 +2,7 @@ import React from 'react';
 import {
     Plus, Clock, Search, Trash2, Database, Box, PlayCircle, Brain,
     LayoutGrid, Newspaper, GraduationCap, Settings, Code2, Loader2, Notebook,
-    CalendarClock, Terminal, Zap, Wand2, Upload
+    CalendarClock, Terminal, Zap, Wand2, Upload, X, FileText, Image
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAppStore } from '@/store';
 import { cn } from '@/lib/utils';
-import { API_BASE } from '@/lib/api';
+import { API_BASE, api } from '@/lib/api';
 import axios from 'axios';
 import { RagPanel } from '@/components/sidebar/RagPanel';
 import { McpPanel } from '@/components/sidebar/McpPanel';
@@ -113,24 +113,32 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
     const [researchMode, setResearchMode] = React.useState<"standard" | "deep_research">("standard");
     const [focusMode, setFocusMode] = React.useState("general");
     const fileInputRef = React.useRef<HTMLInputElement>(null);
+    const [uploadedFiles, setUploadedFiles] = React.useState<{ file: File; name: string }[]>([]);
+    const [spaces, setSpaces] = React.useState<{ id: string; name: string }[]>([]);
+    const [selectedSpaceId, setSelectedSpaceId] = React.useState<string>("");
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
-            // @ts-ignore - Electron natively provides the full system path, but Chrome uses .name
-            const path = file.path || file.name;
-            if (path) {
-                setNewQuery(prev => prev + (prev ? " " : "") + `Please do deep research and analyze the content of the file at this location: ${path}`);
+            const name = file.name;
+            if (!uploadedFiles.some(f => f.name === name)) {
+                setUploadedFiles(prev => [...prev, { file, name }]);
             }
         }
+        // Reset input so the same file can be re-selected
+        if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
-    // Reset dialog state when closed
+    // Fetch spaces and reset dialog state
     React.useEffect(() => {
-        if (!isNewRunOpen) {
+        if (isNewRunOpen) {
+            api.getSpaces().then(setSpaces).catch(() => setSpaces([]));
+        } else {
             setNewQuery("");
             setResearchMode("standard");
             setFocusMode("general");
+            setUploadedFiles([]);
+            setSelectedSpaceId("");
         }
     }, [isNewRunOpen]);
 
@@ -144,13 +152,30 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
     }, [runs, searchQuery]);
 
     const handleStartRun = async () => {
-        if (!newQuery.trim()) return;
+        if (!newQuery.trim() && uploadedFiles.length === 0) return;
         setIsNewRunOpen(false);
+
+        // Upload files to server first, collect server-side paths
+        let serverPaths: string[] = [];
+        if (uploadedFiles.length > 0) {
+            try {
+                const uploads = await Promise.all(
+                    uploadedFiles.map(f => api.uploadRunFile(f.file))
+                );
+                serverPaths = uploads.map(u => u.path);
+            } catch (e) {
+                console.error("File upload failed:", e);
+            }
+        }
+
         const fm = researchMode === 'deep_research' ? focusMode : undefined;
-        await createNewRun(newQuery, undefined, researchMode, fm);
+        const query = newQuery.trim() || (uploadedFiles.length > 0 ? `Analyze the uploaded file(s): ${uploadedFiles.map(f => f.name).join(', ')}` : '');
+        await createNewRun(query, undefined, researchMode, fm, serverPaths.length > 0 ? serverPaths : undefined, selectedSpaceId || undefined);
         setNewQuery("");
         setResearchMode("standard");
         setFocusMode("general");
+        setUploadedFiles([]);
+        setSelectedSpaceId("");
     };
 
     return (
@@ -269,7 +294,45 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
                                                         Upload
                                                     </Button>
                                                 </div>
+                                                {/* Uploaded file chips */}
+                                                {uploadedFiles.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1.5 mt-2">
+                                                        {uploadedFiles.map((uf, idx) => {
+                                                            const ext = uf.name.split('.').pop()?.toLowerCase() || '';
+                                                            const isImage = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext);
+                                                            return (
+                                                                <span key={idx} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-muted/60 border border-border/50 text-xs text-foreground">
+                                                                    {isImage ? <Image className="w-3 h-3 text-blue-400" /> : <FileText className="w-3 h-3 text-orange-400" />}
+                                                                    <span className="max-w-[140px] truncate">{uf.name}</span>
+                                                                    <button
+                                                                        onClick={() => setUploadedFiles(prev => prev.filter((_, i) => i !== idx))}
+                                                                        className="ml-0.5 hover:text-red-400 transition-colors"
+                                                                    >
+                                                                        <X className="w-3 h-3" />
+                                                                    </button>
+                                                                </span>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
                                             </div>
+                                            {/* Space Selector */}
+                                            {spaces.length > 0 && (
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-xs text-muted-foreground shrink-0">Space:</label>
+                                                    <Select value={selectedSpaceId} onValueChange={setSelectedSpaceId}>
+                                                        <SelectTrigger className="h-[30px] flex-1 bg-muted/50 border-border/50 text-foreground text-xs rounded-md px-3">
+                                                            <SelectValue placeholder="Global (no space)" />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="">Global (no space)</SelectItem>
+                                                            {spaces.map(s => (
+                                                                <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                            )}
                                             {/* Research Mode — Toggle + Inline Focus */}
                                             <div className="flex items-center gap-2">
                                                 <button

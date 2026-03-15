@@ -32,6 +32,7 @@ class Citation:
     title: str
     timestamp: str = ""
     credibility: str = "MEDIUM"  # HIGH | MEDIUM | LOW
+    source_type: str = "web"  # "web" | "memory" | "workspace" | "document"
 
 
 @dataclass

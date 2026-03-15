@@ -38,17 +38,42 @@ export const api = {
         }));
     },
 
+    // Upload a file for agent analysis, returns server-side path
+    uploadRunFile: async (file: File): Promise<{ path: string; name: string; size: number }> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await axios.post(`${API_BASE}/runs/upload`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        return res.data;
+    },
+
     // Trigger new run (model optional - backend uses settings default if not provided)
-    createRun: async (query: string, model?: string, mode?: string, focusMode?: string): Promise<API_Run> => {
-        const payload: { query: string; model?: string; mode?: string; focus_mode?: string } = { query };
+    createRun: async (query: string, model?: string, mode?: string, focusMode?: string, filePaths?: string[], spaceId?: string): Promise<API_Run> => {
+        const payload: { query: string; model?: string; mode?: string; focus_mode?: string; file_paths?: string[]; space_id?: string } = { query };
         if (model) payload.model = model;
         if (mode) payload.mode = mode;
         if (focusMode) payload.focus_mode = focusMode;
+        if (filePaths && filePaths.length > 0) payload.file_paths = filePaths;
+        if (spaceId) payload.space_id = spaceId;
         const res = await axios.post(`${API_BASE}/runs`, payload);
         return res.data;
     },
 
-    // Get specific run graph
+    // Get spaces for the user
+    getSpaces: async (): Promise<{ id: string; name: string; description?: string }[]> => {
+        try {
+            const res = await axios.get(`${API_BASE}/remme/spaces`);
+            return (res.data.spaces || []).map((s: any) => ({
+                id: s.space_id || s.id,
+                name: s.name || 'Unnamed Space',
+                description: s.description || ''
+            }));
+        } catch {
+            return [];
+        }
+    },
+
     // Get specific run graph
     getRunGraph: async (runId: string): Promise<{ nodes: PlatformNode[], edges: PlatformEdge[], graph: any }> => {
         const res = await axios.get<API_RunDetail>(`${API_BASE}/runs/${runId}`);

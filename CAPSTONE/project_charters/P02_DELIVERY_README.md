@@ -27,10 +27,37 @@
 - **Agent Config** (`config/agent_config.yaml`) — `deep_research` added to PlannerAgent skills list
 - **User Preferences Hub** (`memory/user_model/preferences_hub.json`) — Schema for stable defaults, output contract, anti-preferences, tooling defaults, autonomy/risk, coding contracts
 
-### Multimodal & Internal Search
+### Multimodal Search (2.5)
 
-- `Multimodal Search` handling Vision Q&A (local images), PDFs, and CSV data modeling (via `server_multimodal.py`).
-- `Internal Knowledge Search` handling filesystem search and episodic memory queries (via `server_internal.py`).
+- **Dual-Provider File Extraction** (`routers/runs.py`) — Configurable multimodal extraction supporting two providers: OpenRouter (default, uses `OPENROUTER_API_KEY`) and Gemini File API (optional, uses `GEMINI_API_KEY`). Provider selection via `settings.file_extraction_provider`. Router function `_extract_multimodal_file` dispatches to `_extract_via_openrouter` (base64 vision API) or `_extract_via_gemini` (native file upload via `google.genai` SDK). Both providers raise `RuntimeError` on failure instead of silently returning error strings.
+- **File Content Extraction Pipeline** (`routers/runs.py:_extract_file_content`) — Unified extraction for all file types: images (`.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`) and PDFs via multimodal provider; CSV via direct read (capped at 50K chars); Excel (`.xlsx`, `.xls`) via `openpyxl` conversion to CSV-like rows (capped at 2000 rows); plain text fallback for other extensions; binary file graceful handling. Returns `(file_manifest, uploaded_files)` tuple for the agent loop.
+- **File Path Detection** (`routers/runs.py:_detect_file_paths_in_query`) — Regex-based detection of file paths in query text (e.g., `"file at this location: /tmp/doc.pdf"`) for backward compatibility with non-upload workflows.
+- **Multimodal MCP Server** (`mcp_servers/server_multimodal.py`) — FastMCP server exposing 4 tools:
+  - `analyze_image(image_path, prompt)` — Vision Q&A using Gemini 2.5 Flash via LangChain, supports JPEG/PNG/WebP
+  - `analyze_pdf_document(pdf_path, prompt)` — PDF extraction via `pymupdf4llm` to markdown, LLM Q&A on extracted content (up to 100K chars), direct text return for simple extraction prompts
+  - `analyze_data_file(file_path, prompt)` — CSV and Excel (`.xlsx`/`.xls`) statistical analysis: auto-detects numeric vs categorical columns, computes mean/min/max/count for numerics, unique value counts for categoricals, sends summary + 5-row sample to LLM (not full data, preventing PII leakage)
+  - `analyze_video(video_path, prompt)` — Native video analysis via Gemini File API with async upload, processing poll loop, and automatic cloud file cleanup
+- **Post-Plan Multimodal Compliance Enforcement** (`core/loop.py`) — Structural guardrail that runs after the planner generates a plan: scans all plan nodes and rewrites any `RetrieverAgent` tasks that reference uploaded files to `ThinkerAgent` (for images/PDFs/documents) or `CoderAgent` (for CSV/spreadsheet/Excel). Detection uses both filename matching and 15 upload-marker phrases (e.g., "uploaded file", "the chart", "the pdf", "analyze the file"). Prevents the planner LLM from incorrectly routing uploaded file analysis to web search.
+- **globals_schema File Injection** (`core/loop.py`) — Uploaded file content injected into the DAG `globals_schema` under both the original filename and `{session_id}_{filename}` keys, allowing plan nodes to resolve file dependencies via their `reads` fields without "Missing dependency" errors.
+- **Planner Multimodal Awareness** (`core/skills/library/planner/skill.py`) — Highest-priority constraint block in planner prompt: images → ThinkerAgent, PDFs → ThinkerAgent, CSV/data → CoderAgent. Never use RetrieverAgent for uploaded file analysis. Multimodal tools listed in agent capability table.
+- **Configurable Extraction Model** (`config/settings.json`) — `models.file_extraction` key controls which model is used for extraction (default: `google/gemini-2.5-flash`). Separate `file_extraction_provider` key selects the API provider (`openrouter` or `gemini`).
+
+### Internal Knowledge Search (2.6)
+
+- **Internal Knowledge MCP Server** (`mcp_servers/server_internal.py`) — FastMCP server exposing 5 tools:
+  - `search_workspace_files(query, directory)` — Recursive text search across workspace files (`.py`, `.md`, `.txt`, `.json`, `.csv`, `.yaml`, `.html`, `.css`, `.js`, `.ts`, `.tsx`), skips `.git`/`node_modules`/`venv`/`__pycache__`, returns matching lines with ±1 context line, capped at 20 results and 3 matches per file
+  - `search_past_conversations(query)` — Scans `data/user_memory.json` for matching memories by content and tags (case-insensitive)
+  - `create_space(space_name)` — Creates a persistent workspace/collection in `data/spaces.json` for ongoing research projects
+  - `add_to_space(space_name, item)` — Appends research notes, URLs, or knowledge items to a named space
+  - `search_space(space_name)` — Retrieves all items stored in a specific project space
+- **Memory Retriever with Provenance Tags** (`memory/memory_retriever.py`) — Orchestrates semantic recall (Qdrant/FAISS vector search), entity recall (NER → Neo4j graph resolution → expansion), and graph expansion. Output sections tagged with `[SOURCE: MEMORY]` and `[SOURCE: KNOWLEDGE_GRAPH]` for downstream provenance attribution. Logging instrumentation for debugging: query details, store type, filter metadata, result counts.
+- **Cross-Session Memory Retrieval Fix** (`routers/runs.py`) — Removed `session_id=run_id` from `retrieve()` calls. Each new run gets a unique `run_id`; filtering by it excluded ALL memories from prior sessions (FAISS post-search filter at `faiss_store.py:74-75`). Now only uses `space_id` scoping for memory retrieval.
+- **Query Intent Classifier** (`core/loop.py`) — Pattern-matching classifier that detects internal-knowledge queries (e.g., "what did we discuss", "do you remember", "our previous", "last session") and classifies intent as `internal` (signal + memory found), `internal_empty` (signal but no memory), or `external`. Passed to planner as `query_intent` field to guide memory-first vs web-search routing.
+- **Planner Internal Query Routing** (`core/skills/library/planner/skill.py`) — When `query_intent` is `internal`, planner prioritizes memory context over web search. When `internal_empty`, planner acknowledges no memories found. Replaced the old "May be old. Request retriever agent to search online" instruction.
+- **Source Provenance in Citations** (`search/synthesizer.py`) — `Citation` dataclass extended with `source_type` field (`"web"` | `"memory"` | `"workspace"` | `"document"`) for provenance tracking across blended search results.
+- **Formatter Provenance Instructions** (`core/skills/library/formatter/skill.py`) — Formatter prompt includes `SOURCE PROVENANCE` section: labels each section's origin, groups sources as "From your workspace", "From previous research", "From web" in citations footer.
+- **Space-Scoped Retrieval** (`memory/memory_retriever.py`, `routers/runs.py`) — `RunRequest` accepts `space_id`; memory retrieval scoped to specified space via Qdrant payload filter (`space_id IN [__global__, requested_space]`) and Neo4j `IN_SPACE` relationship filter.
+- **MCP Config Registration** (`mcp_servers/mcp_config.json`) — Both `server_multimodal` and `server_internal` registered globally so all agents can invoke multimodal and internal knowledge tools.
 
 ## 2. Architecture Changes
 
@@ -45,11 +72,22 @@
 - **Agent Role Segregation** — Clear rules in deep research: RetrieverAgent for search (never CoderAgent), ThinkerAgent for analysis, SummarizerAgent for synthesis, FormatterAgent for reports.
 - **JSON Parse Fallback** — Lightweight models returning plain text instead of JSON are gracefully handled by wrapping raw output in expected output keys.
 
-### Multimodal & Internal Search
+### Multimodal Architecture (2.5)
 
-- Created `mcp_servers/server_multimodal.py` for image parsing, PDF breakdown, and CSV data extraction using Gemini models and standard libs.
-- Created `mcp_servers/server_internal.py` for local context and bridging to past conversations.
-- Updated `mcp_servers/mcp_config.json` to expose these servers globally.
+- **Dual-Provider Architecture** — File extraction routed through `_extract_multimodal_file()` which dispatches to either OpenRouter (base64 vision API, default) or Gemini File API (native upload). Provider selection via single settings key `file_extraction_provider`, enabling runtime switching without code changes.
+- **Post-Plan Structural Enforcement** — Instead of relying solely on LLM prompt compliance, `loop.py` applies a deterministic guardrail after plan generation. Scans plan DAG nodes and rewrites incorrect `RetrieverAgent` assignments for uploaded files to `ThinkerAgent`/`CoderAgent` based on content type. Ensures uploaded file analysis never routes to web search regardless of LLM behavior.
+- **globals_schema DAG Integration** — Uploaded file content injected into the execution graph's globals_schema under both original and session-prefixed keys, bridging the gap between file upload and plan node dependency resolution (fixes "Missing dependency" errors).
+- **Unified Extraction Pipeline** — Single `_extract_file_content()` function handles all file types through a priority chain: multimodal provider (images + PDFs) → direct read (CSV) → openpyxl conversion (Excel) → text fallback → binary graceful handling. Each path returns typed content (`image`, `pdf`, `csv`, `spreadsheet`, `text`, `binary`).
+
+### Internal Knowledge Architecture (2.6)
+
+- **Memory Retriever Provenance Tagging** — `memory_retriever.py` output sections tagged with `[SOURCE: MEMORY]` and `[SOURCE: KNOWLEDGE_GRAPH]` enabling downstream attribution in reports.
+- **Cross-Session Memory Fix** — Removed session_id-based filtering that was silently blocking all cross-session memory retrieval (FAISS post-search filter eliminated memories stored under different session IDs).
+- **Query Intent Classification** — Pattern-matching classifier in `loop.py` detects internal-knowledge queries and routes to memory-first retrieval. Planner receives `query_intent` field (`internal`/`internal_empty`/`external`) to guide routing decisions.
+- **Space-Scoped Retrieval** — `RunRequest` accepts `space_id`; memory retrieval auto-scopes to global + specified space via Qdrant/Neo4j filters.
+- **Citation Source Types** — `Citation` dataclass in `synthesizer.py` extended with `source_type` field (`web`/`memory`/`workspace`/`document`) for provenance tracking across blended results.
+- **Formatter Provenance** — Formatter prompt enforces source attribution: groups citations as "From your workspace", "From previous research", "From web".
+- **MCP Server Registration** — `server_multimodal` (4 tools) and `server_internal` (5 tools) registered globally in `mcp_config.json` so all agents can invoke them.
 - Implemented `focus_mode: "internal"` into the Deep Research phase to specifically fetch from the local workspace footprint.
 
 ## 3. API And UI Changes
@@ -75,10 +113,27 @@
 - Graph Canvas: ResearchProgress overlay — draggable, collapsible widget showing URL extraction progress bar, live agent activity with spinners, completed URLs with domain names
 - Store: ResearchProgressState tracking phases, node statuses, URL extraction, step labels; query approval modal
 
-### Multimodal & Internal Search
+### Multimodal & Internal Search (2.5 / 2.6)
 
-- Exposed new internal/multimodal tooling to existing agents without altering frontend contract.
-- Added new MCP server registration.
+**Modified Backend Endpoints:**
+
+- `POST /api/runs` — Extended `RunRequest` with `file_paths` (list of server-side file paths for multimodal extraction) and `space_id` (for space-scoped memory retrieval)
+- `POST /runs/upload` — File upload endpoint saves files to `data/uploads/` and returns server paths for subsequent run requests
+
+**Backend Processing Pipeline:**
+
+- File upload → `_extract_file_content()` dispatches by type → content injected into planner query as `UPLOADED FILE CONTENTS` block → post-plan enforcement ensures correct agent assignment → globals_schema injection for DAG node resolution
+- Memory retrieval → `memory_retriever.retrieve()` with provenance tags → query intent classifier → planner receives `query_intent` + `memory_context` → formatter applies source attribution
+
+**New MCP Tools (available to all agents):**
+
+- Multimodal: `analyze_image`, `analyze_pdf_document`, `analyze_data_file`, `analyze_video`
+- Internal: `search_workspace_files`, `search_past_conversations`, `create_space`, `add_to_space`, `search_space`
+
+**Configuration:**
+
+- `config/settings.json` — `file_extraction_provider`: `"openrouter"` (default) or `"gemini"`; `models.file_extraction`: model ID for extraction (default: `google/gemini-2.5-flash`)
+- Environment: `OPENROUTER_API_KEY` (default provider), `GEMINI_API_KEY` (optional Gemini provider)
 
 ## 4. Mandatory Test Gate Definition
 
@@ -121,8 +176,26 @@ Test Files  5 passed (5)
 
 ### Multimodal & Internal Tests
 
-- Created `tests/integration/test_oracle_multimodal_internal.py` to validate module loading.
-- Passes all standard feature branching CI logic.
+**Unit Tests** (`tests/unit/oracle/test_multimodal_extraction.py`) — 10 tests:
+
+- `test_pdf_extraction_returns_markdown` — PDF extraction via mocked multimodal provider
+- `test_image_extraction_calls_provider` — Image extraction routes to configured provider
+- `test_csv_extraction_reads_content` — CSV direct read without LLM processing
+- `test_xlsx_extraction` — Excel-to-CSV conversion via openpyxl
+- `test_binary_file_fallback` — Binary files handled gracefully (no crash)
+- `test_nonexistent_file_skipped` — Missing paths return empty manifest
+- `test_detect_file_paths_in_query` — File path regex detection in query text
+- `test_file_extraction_model_configurable` — Settings `models.file_extraction` key exists
+- `test_post_plan_enforcement_rewrites_retriever` — RetrieverAgent rewritten to ThinkerAgent for image uploads
+- `test_post_plan_enforcement_csv_uses_coder` — RetrieverAgent rewritten to CoderAgent for CSV/spreadsheet
+
+**Unit Tests** (`tests/unit/oracle/test_provenance_labels.py`) — 3 tests:
+
+- `test_memory_context_has_provenance_tags` — `[SOURCE: MEMORY]` tags in retriever output
+- `test_citation_source_type_field` — Citation dataclass accepts `source_type`
+- `test_formatter_skill_has_provenance_section` — Formatter prompt contains provenance instructions
+
+**Integration Tests** (`tests/integration/test_oracle_multimodal_internal.py`) — Module loading validation
 
 ### CI Workflow
 
@@ -154,12 +227,17 @@ $ cat .github/workflows/project-gates.yml | grep p02
 - Focus mode configs are static — no user-injectable search operators
 - No new secrets or API keys introduced (browser-use model uses local Ollama instance)
 
-### Multimodal & Internal Search
+### Multimodal & Internal Search (2.5 / 2.6)
 
 - `search_workspace_files` strictly filters by a safe whitelist of file extensions (`.py`, `.md`, `.txt`, `.json`, etc.) implicitly preventing the reading of `.env` files or binary secrets.
-- `search_workspace_files` automatically drops system directories like `.git` and `venv` preventing path-traversing denial of service by hanging on recursive loops.
-- `analyze_data_file` strictly limits tabular analysis to `.csv` format and only sends statistical summaries (not full row data) to the LLM to prevent PII leakage on large datasets.
-- Vision and PDF parsing operations run locally before sending base64 payloads to Google Gemini, heavily relying on the enterprise API data-privacy wrapper.
+- `search_workspace_files` automatically drops system directories like `.git`, `node_modules`, `venv`, `__pycache__` preventing path-traversal and denial of service from recursive loops.
+- `analyze_data_file` sends only statistical summaries and 5-row samples (not full row data) to the LLM to prevent PII leakage on large datasets. Supports CSV and Excel via openpyxl.
+- File extraction providers raise `RuntimeError` on failure instead of silently injecting error strings into the planner query — prevents error text from being treated as actual file content.
+- Gemini File API provider auto-deletes uploaded files after extraction (cleanup in `finally` block) to avoid cloud storage accumulation.
+- OpenRouter provider uses 120s timeout to prevent hanging connections on large file uploads.
+- CSV reads capped at 50K chars; Excel conversion capped at 2000 rows — prevents memory exhaustion on large files.
+- Binary files handled gracefully with `[Binary file]` placeholder — no raw binary content sent to LLM.
+- Post-plan enforcement is a deterministic structural check (not LLM-dependent) — cannot be bypassed by prompt injection in uploaded file content.
 
 ## 8. Known Gaps
 
@@ -171,10 +249,15 @@ $ cat .github/workflows/project-gates.yml | grep p02
 - No rate limiting on search endpoints
 - Browser-use model hardcoded to Ollama/gemma3:12b — requires local Ollama instance
 
-### Multimodal & Internal Search
+### Multimodal & Internal Search (2.5 / 2.6) — Known Gaps
 
-- Currently, large tabular analysis depends strictly on CSVs; XLSX binary ingestion requires manual CSV pre-processing.
-- High-resolution images sent to LLMs might throw payload size limits if sent raw without proper downsizing.
+- No frontend drag-drop upload UI in the main search input — file upload requires the existing upload endpoint workflow
+- No reverse image search (image-to-web-search flow) — image VQA works but finding similar images online is not implemented
+- No chart/visualization generation from CSV data — CoderAgent is assigned but matplotlib chart generation instructions are guidance-only (no enforced pipeline)
+- No frontend space selector UI — backend space-scoped retrieval works but users cannot select spaces from the UI
+- High-resolution images sent via OpenRouter use base64 encoding which may hit payload size limits for very large files
+- Video analysis in MCP server uses `gemini-1.5-flash` (hardcoded) — not configurable via settings
+- `server_multimodal.py` contains duplicated code blocks (copy-paste artifact) that should be cleaned up
 
 ## 9. Rollback Plan
 
@@ -186,10 +269,19 @@ $ cat .github/workflows/project-gates.yml | grep p02
 - Frontend search UI components are isolated — removing `features/search/` and `ResearchProgress.tsx` reverts UI
 - No database migrations or schema changes to roll back
 
-### Multimodal & Internal Search
+### Multimodal & Internal Search (2.5 / 2.6) — Rollback
 
-- Revert `server_multimodal.py` and `server_internal.py` from `mcp_servers`.
-- Remove instructions from `core/skills/library/retriever/skill.py`.
+- Revert `server_multimodal.py` and `server_internal.py` from `mcp_servers/` and their entries in `mcp_config.json`
+- Revert dual-provider extraction functions in `routers/runs.py` (`_extract_via_openrouter`, `_extract_via_gemini`, `_extract_multimodal_file`, `_extract_file_content`)
+- Revert post-plan enforcement block and globals_schema injection in `core/loop.py`
+- Revert query intent classifier in `core/loop.py`
+- Revert planner multimodal awareness block in `core/skills/library/planner/skill.py`
+- Revert provenance tags in `memory/memory_retriever.py`
+- Revert `source_type` field from `Citation` in `search/synthesizer.py`
+- Revert provenance instructions from `core/skills/library/formatter/skill.py`
+- Remove `file_extraction_provider` and `models.file_extraction` from `config/settings.json`
+- Remove test files: `tests/unit/oracle/test_multimodal_extraction.py`, `tests/unit/oracle/test_provenance_labels.py`
+- No database migrations or schema changes to roll back
 
 ## 10. Demo Steps
 
@@ -214,5 +306,35 @@ $ cat .github/workflows/project-gates.yml | grep p02
 
 ### Multimodal & Internal Search Demo
 
-1. Open the UI and test dropping a PDF or CSV file into the browser.
-2. Activate focus mode "internal" and ask about past memory context.
+**Image Upload & Analysis:**
+
+1. Start the backend: `python api.py`
+2. Start the frontend: `cd platform-frontend && npm run dev`
+3. Click "New Run", upload an image file (PNG/JPG/WebP)
+4. Enter a query: "What data is shown in this image?"
+5. Observe: file extracted via OpenRouter/Gemini → planner assigns ThinkerAgent (not RetrieverAgent) → formatted analysis returned
+
+**PDF Upload & Q&A:**
+
+1. Click "New Run", upload a PDF document
+2. Enter a query: "Summarize the key findings in this document"
+3. Observe: PDF extracted to markdown via multimodal provider → ThinkerAgent analyzes content → FormatterAgent produces report
+
+**CSV/Excel Data Analysis:**
+
+1. Click "New Run", upload a CSV or XLSX file
+2. Enter a query: "What are the top trends in this data?"
+3. Observe: CSV read directly / Excel converted via openpyxl → CoderAgent assigned for statistical analysis → formatted output
+
+**Internal Knowledge Query:**
+
+1. Run several research queries first to build up memory
+2. Click "New Run", enter: "What did we discuss about API design?"
+3. Observe backend logs: `🔍 MemoryRetriever: searching...` with `session_id=None`, `Semantic recall: X results` (X > 0)
+4. Result should reference previous memories (tagged `[SOURCE: MEMORY]`) rather than defaulting to web search
+
+**Provider Switching (OpenRouter → Gemini):**
+
+1. Edit `config/settings.json`: change `"file_extraction_provider": "openrouter"` to `"gemini"`
+2. Ensure `GEMINI_API_KEY` is set in environment
+3. Upload an image — extraction now uses Gemini File API (native upload) instead of OpenRouter base64
