@@ -22,7 +22,7 @@
 - **Config layer** (`memory/qdrant_config.py`, `config/qdrant_config.yaml`): Collection config (dimension, distance), URL/API key from env (`QDRANT_URL`, `QDRANT_API_KEY`)
 - **FAISS fallback**: Default provider remains `faiss`; switch via `VECTOR_STORE_PROVIDER=qdrant`
 - **Migration script** (`scripts/migrate_all_memories.py`): Orchestrates FAISS→Qdrant (memories + RAG) and Qdrant→Neo4j backfill in one command; wraps `migrate_faiss_to_qdrant.py`, `migrate_rag_faiss_to_qdrant.py`, and `migrate_memories_to_neo4j.py`
-- **Setup guide** (`CAPSTONE/project_charters/P11_mnemo_SETUP_GUIDE.md`): Qdrant (Cloud/Docker) and Neo4j setup
+- **Setup guide** (`CAPSTONE/project_charters/P11_SETUP_GUIDE.md`): Qdrant (Cloud/Docker) and Neo4j setup
 - **RemMe integration**: `shared/state.py` uses `get_vector_store()`; RemMe router reads from provider-agnostic store
 
 **Phase 2 (Neo4j Knowledge Graph)**
@@ -80,7 +80,7 @@
 - **Integration**: Startup background sync when enabled; after `add_memory` and `create_space` enqueue background sync
 - **Frontend**: Create Space checkbox “Keep on this device only (don’t sync to cloud)” → `sync_policy: local_only`
 - **Tests**: Unit (merge, policy), integration (two devices converge, B pushes A receives, apply-latency &lt;150ms, load three devices + one pull, reconnection second pull idempotent)
-- **Setup**: `P11_mnemo_SETUP_GUIDE.md` — Phase 4 section (one-server vs two-stores, env vars)
+- **Setup**: `P11_SETUP_GUIDE.md` — Phase 4 section (one-server vs two-stores, env vars)
 
 **Phase 5 — Auth, Lifecycle, Shared Space**
 - **Login/register**: `routers/auth.py` — POST `/auth/register`, `/auth/login`; JWT; guest via `X-User-Id`. **Guest → registered migration** is the single entry point: `memory.auth.migration.migrate_guest_to_registered(guest_id, registered_id)`; do not perform ad-hoc Qdrant/Neo4j ownership updates elsewhere.
@@ -287,6 +287,7 @@ uv run pytest tests/integration/test_sync_two_devices_converge.py -v -m slow
 
 ## 7. Security And Safety Impact
 - **Qdrant credentials**: `QDRANT_URL` and `QDRANT_API_KEY` stored in `.env` (gitignored); never committed
+- **JWT (Phase 5)**: Login/register use HS256 with `MNEMO_SECRET_KEY`; store in `.env`; never commit. For production, consider RS256 (see `P11_AUTH_DESIGN.md`).
 - **Phase 3 APIs**: `POST /api/remme/spaces`, `GET /api/remme/spaces`, `GET /api/remme/preferences` (with optional space filter); require same auth as existing RemMe endpoints
 - **Local Docker**: No auth by default; suitable for dev only
 - **Qdrant Cloud**: Uses API key authentication; ensure keys are scoped and rotated as needed
@@ -297,7 +298,6 @@ uv run pytest tests/integration/test_sync_two_devices_converge.py -v -m slow
 - **Sync auth:** Addressed (user_id from auth context, not body).
 - **Guest user_id stability:** Addressed (FE ownership, X-User-Id, legacy-guest-id for migration).
 - **Graph expansion depth:** One-hop only; `depth` reserved for multi-hop. Entity-friendly payload beyond `entity_ids`/`entity_labels` optional.
-- **Session-level extraction:** Single pass for memories + preferences + entities from session not yet implemented (§8.2).
 - **Retrieval latency:** P95 < 250 ms target benchmarked via `scripts/benchmark_retrieval.py` (P95 39.8 ms, PASS).
 - **Acceptance/integration:** Structural tests in place; feature-level tests to be expanded per charter.
 
@@ -310,7 +310,7 @@ uv run pytest tests/integration/test_sync_two_devices_converge.py -v -m slow
 - **Script**: `scripts/demos/p11_mnemo.sh` (scaffold; replace with end-to-end demo as features mature)
 
 ### Quick Qdrant Demo
-1. Set up Qdrant (see `CAPSTONE/project_charters/P11_mnemo_SETUP_GUIDE.md`): Docker or Cloud
+1. Set up Qdrant (see `CAPSTONE/project_charters/P11_SETUP_GUIDE.md`): Docker or Cloud
 2. Configure env: `QDRANT_URL`, `QDRANT_API_KEY` if using Cloud
 3. Test connection:
    ```bash

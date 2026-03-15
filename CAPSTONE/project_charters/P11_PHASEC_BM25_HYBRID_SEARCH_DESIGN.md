@@ -224,3 +224,12 @@ Implement 3.1 first; then apply the same pattern for memories in 3.2.
 
 - **Entity gate:** Keep entity gate in RAG search after fusion; no change to current behavior.
 - **Backward compatibility:** FAISS RAG backend remains vector-only; hybrid requires `RAG_VECTOR_STORE_PROVIDER=qdrant`.
+
+---
+
+## Future Enhancements and Improvements
+
+- **Migration/backfill for existing memories:** Add a script or migration step to backfill sparse vectors (`text-bm25`) for points already in `arcturus_memories` so hybrid search applies to legacy data.
+- **SPLADE:** Evaluate SPLADE (e.g. `prithivida/Splade_PP_en_v1`) for context-aware sparse embeddings; currently BM25-style via FastEmbed.
+- **Tuning:** Experiment with RRF parameters, prefetch limits, and relative weight of dense vs sparse for memories and RAG.
+- **Optional removal of rank_bm25:** Remove `rank-bm25` from pyproject.toml if no longer used after full migration to Qdrant hybrid.
