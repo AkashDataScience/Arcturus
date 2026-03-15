@@ -11,6 +11,7 @@ import pytest
 pytestmark = [pytest.mark.p11_automation, pytest.mark.integration]
 
 from tests.automation.p11_mnemo.conftest import requires_qdrant_neo4j
+from tests.automation.p11_mnemo.helpers import wait_for_condition
 
 
 @requires_qdrant_neo4j
@@ -36,8 +37,11 @@ class TestRecommendSpaceExpected:
             "/api/remme/add",
             json={"text": "Planning to repaint the living room blue", "category": "general", "space_id": decor_id},
         )
-        import time
-        time.sleep(0.3)
+        # Wait for Qdrant to index so recommend-space can find the new memories
+        wait_for_condition(
+            lambda: client.get("/api/remme/recommend-space", params={"text": "Luna"}).json().get("recommended_space_id") == cat_id,
+            timeout_sec=5.0,
+        )
         yield {"cat_space_id": cat_id, "decor_space_id": decor_id}
 
     def test_recommend_luna_returns_cat(self, client, _setup_spaces_and_memories):

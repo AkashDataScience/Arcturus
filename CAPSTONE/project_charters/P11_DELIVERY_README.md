@@ -83,7 +83,7 @@
 - **Setup**: `P11_mnemo_SETUP_GUIDE.md` — Phase 4 section (one-server vs two-stores, env vars)
 
 **Phase 5 — Auth, Lifecycle, Shared Space**
-- **Login/register**: `routers/auth.py` — POST `/auth/register`, `/auth/login`; JWT; guest via `X-User-Id`; migration service for guest → registered.
+- **Login/register**: `routers/auth.py` — POST `/auth/register`, `/auth/login`; JWT; guest via `X-User-Id`. **Guest → registered migration** is the single entry point: `memory.auth.migration.migrate_guest_to_registered(guest_id, registered_id)`; do not perform ad-hoc Qdrant/Neo4j ownership updates elsewhere.
 - **user_id FE ownership**: Frontend generates/persists guest ID (localStorage); sends `X-User-Id`; backend uses auth context (JWT or header); file fallback only for non-request contexts when `VITE_ENABLE_LOCAL_MIGRATION=true`.
 - **Lifecycle Manager** (`memory/lifecycle.py`): Importance scoring, archival heuristics, contradiction resolution; `archived`, `access_count`, `last_accessed_at`.
 - **Shared Space & templates**: sync_policy `shared`; space templates (Computer Only, Personal, Workspace, Custom, More Templates…); shared spaces via `share_space_with`; memory/run context excludes global when in a space.

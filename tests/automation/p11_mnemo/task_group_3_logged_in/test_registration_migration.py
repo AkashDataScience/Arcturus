@@ -2,6 +2,7 @@ import pytest
 import asyncio
 from typing import List
 
+from tests.automation.p11_mnemo.helpers import wait_for_condition
 from memory.vector_store import get_vector_store
 from memory.knowledge_graph import get_knowledge_graph
 from memory.unified_extraction_schema import FactItem, UnifiedExtractionResult, MemoryCommand
@@ -9,8 +10,8 @@ from routers.remme import add_memory, AddMemoryRequest
 from memory.space_constants import SPACE_ID_GLOBAL
 from core.auth.context import set_current_user_id
 from fastapi import BackgroundTasks
-import time
 from memory.memory_retriever import retrieve
+
 
 @pytest.fixture
 def tg3_guest_id():
@@ -59,7 +60,11 @@ async def test_tg3_02_registration_migration(tg3_guest_id, tg3_registered_id, mo
             points=[m["id"]]
         )
     
-    time.sleep(1.0) # Wait for index consistency
+    # Wait for index consistency before verifying
+    wait_for_condition(
+        lambda: len(store.get_all(filter_metadata={"user_id": tg3_registered_id}, limit=100)) >= 1,
+        timeout_sec=5.0,
+    )
         
     # Neo4j Migration
     with neo4j_test_driver.session() as session:
@@ -106,7 +111,7 @@ async def test_tg3_12_lifecycle_archival(tg3_registered_id, mock_llm_extractor):
         payload={"archived": True, "importance": 0.01},
         points=[mem_id]
     )
-    time.sleep(1.0)
+    wait_for_condition(lambda: store.get(mem_id) and store.get(mem_id).get("archived") is True, timeout_sec=5.0)
     
     # Verify via direct get first to be sure flag is set
     mem_check = store.get(mem_id)

@@ -9,8 +9,13 @@ import re
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _utc_iso_now() -> str:
+    """Return current UTC time as ISO8601 string with Z suffix (sync merge compatibility)."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 from typing import Dict, List, Any, Optional, Set
 import numpy as np
 import pdb
@@ -247,7 +252,7 @@ class QdrantVectorStore:
                 return similar[0]
 
         memory_id = str(uuid.uuid4())
-        now_ts = datetime.now().isoformat()
+        now_ts = _utc_iso_now()
         payload = {
             "text": text,
             "category": category,
@@ -481,7 +486,7 @@ class QdrantVectorStore:
                 return False
             updated = existing.copy()
             updated.pop("id", None)
-            updated["updated_at"] = datetime.now().isoformat()
+            updated["updated_at"] = _utc_iso_now()
             if text:
                 updated["text"] = text
             if metadata:
@@ -530,7 +535,7 @@ class QdrantVectorStore:
             if "version" not in merged:
                 merged["version"] = 1
             if "updated_at" not in merged:
-                merged["updated_at"] = datetime.now().isoformat()
+                merged["updated_at"] = _utc_iso_now()
             if "deleted" not in merged:
                 merged["deleted"] = False
             current_user_id = get_user_id() if self._is_tenant else None
@@ -644,7 +649,7 @@ class QdrantVectorStore:
         if existing:
             updated = existing.copy()
             updated.pop("id", None)
-            updated["updated_at"] = datetime.now().isoformat()
+            updated["updated_at"] = _utc_iso_now()
             src = updated.get("source", "")
             if source not in src:
                 updated["source"] = f"{src}, {source}"

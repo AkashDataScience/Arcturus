@@ -1,10 +1,70 @@
 import os
+import re
+import hashlib
 import pytest
 from typing import Generator
+from unittest.mock import patch
 import json
+import numpy as np
 
 from qdrant_client import QdrantClient
 from neo4j import GraphDatabase
+
+# Embedding dimension (nomic default)
+_DIM = 768
+
+
+def _word_overlap_embedding(text: str, task_type: str = "search_document"):
+    """Word-overlap embedding so retrieval/recommend-space tests get deterministic, query-relevant results."""
+    tokens = set(re.findall(r"\b\w+\b", (text or "").lower()))
+    vec = np.zeros(_DIM, dtype=np.float32)
+    for t in tokens:
+        idx = int(hashlib.md5(t.encode()).hexdigest(), 16) % _DIM
+        vec[idx] += 1.0
+    norm = np.linalg.norm(vec)
+    if norm > 0:
+        vec = vec / norm
+    else:
+        vec[0] = 1.0
+    return vec
+
+# Guest user for auth (used by client fixture and helpers)
+AUTH_HEADERS = {"X-User-Id": "00000000-0000-0000-0000-000000000001"}
+
+
+def _qdrant_available() -> bool:
+    try:
+        url = os.environ.get("QDRANT_URL", "http://localhost:6333")
+        QdrantClient(url=url, timeout=2)
+        return True
+    except Exception:
+        return False
+
+
+def _neo4j_available() -> bool:
+    try:
+        from memory.knowledge_graph import get_knowledge_graph
+        kg = get_knowledge_graph()
+        return kg is not None and getattr(kg, "enabled", False)
+    except Exception:
+        return False
+
+
+def requires_qdrant_neo4j(f):
+    """Skip if Qdrant or Neo4j not available (e.g. default pytest run without test services)."""
+    return pytest.mark.skipif(
+        not _qdrant_available() or not _neo4j_available(),
+        reason="Qdrant and/or Neo4j not available (start services to run automation)",
+    )(f)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def p11_embedding_mock():
+    """Patch get_embedding so retrieval and recommend-space work without real LLM; word-overlap for relevance."""
+    with patch("remme.utils.get_embedding", side_effect=_word_overlap_embedding), \
+         patch("routers.remme.get_embedding", side_effect=_word_overlap_embedding):
+        yield
+
 
 # Ensure we're running with the right test DBs
 @pytest.fixture(scope="session", autouse=True)
@@ -33,8 +93,13 @@ def neo4j_test_driver():
     driver.close()
 
 @pytest.fixture(autouse=True)
-def clean_databases(qdrant_test_client, neo4j_test_driver):
-    """Clean Neo4j and Qdrant before each test."""
+def clean_databases(qdrant_test_client, neo4j_test_driver, request):
+    """Clean Neo4j and Qdrant before each test. Skip for TestSequentialRaleighJonFlow so steps share state."""
+    # Sequential scenario tests depend on prior steps; do not clean between them
+    parent_name = getattr(request.node.parent, "name", "") if request.node.parent else ""
+    if "TestSequentialRaleighJonFlow" in parent_name:
+        yield
+        return
     # Clean Neo4j
     with neo4j_test_driver.session() as session:
         session.run("MATCH (n) DETACH DELETE n")
@@ -82,3 +147,11 @@ def mock_llm_extractor(monkeypatch):
     m = MockExtractor()
     monkeypatch.setattr(UnifiedExtractor, "_call_llm", m.mock_call_llm)
     return m
+
+
+@pytest.fixture
+def client():
+    """TestClient with auth headers for RemMe/API tests."""
+    from fastapi.testclient import TestClient
+    from api import app
+    return TestClient(app, headers=AUTH_HEADERS)

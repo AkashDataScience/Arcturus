@@ -14,6 +14,7 @@ from tests.automation.p11_mnemo.helpers import (
     assert_context_excludes,
     neo4j_has_entity,
     neo4j_has_fact,
+    wait_for_condition,
 )
 from tests.automation.p11_mnemo.conftest import AUTH_HEADERS
 
@@ -34,10 +35,11 @@ class TestSequentialRaleighJonFlow:
             },
         )
         assert r.status_code == 200
-        # Give KG time to ingest (async possible)
-        import time
-        time.sleep(0.5)
-        assert neo4j_has_fact(USER_ID, "location", "raleigh") or neo4j_has_entity(USER_ID, "Raleigh", "City")
+        ok = wait_for_condition(
+            lambda: neo4j_has_fact(USER_ID, "location", "raleigh") or neo4j_has_entity(USER_ID, "Raleigh", "City"),
+            timeout_sec=5.0,
+        )
+        assert ok, "Neo4j should have location fact or Raleigh entity after add"
 
     def test_step_02_retrieve_weather_has_raleigh(self, client):
         """Query about weather. Context MUST include Raleigh (from facts/entities)."""
@@ -54,11 +56,15 @@ class TestSequentialRaleighJonFlow:
             },
         )
         assert r.status_code == 200
-        import time
-        time.sleep(0.5)
-        assert neo4j_has_entity(USER_ID, "Jon", "Person")
-        assert neo4j_has_entity(USER_ID, "Google", "Company")
-        assert neo4j_has_entity(USER_ID, "Durham", "City")
+        ok = wait_for_condition(
+            lambda: (
+                neo4j_has_entity(USER_ID, "Jon", "Person")
+                and neo4j_has_entity(USER_ID, "Google", "Company")
+                and neo4j_has_entity(USER_ID, "Durham", "City")
+            ),
+            timeout_sec=5.0,
+        )
+        assert ok, "Neo4j should have Jon, Google, Durham entities after add"
 
     def test_step_04_retrieve_meet_jon_has_context(self, client):
         """Query about meeting Jon at office. Context MUST include Jon, office, Durham or Google."""

@@ -4,9 +4,28 @@ P11 automation helpers — retrieve context, Neo4j queries, shared assertions.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Callable, Dict, List, Optional
 
 from tests.automation.p11_mnemo.conftest import AUTH_HEADERS
+
+
+def wait_for_condition(
+    callback: Callable[[], bool],
+    timeout_sec: float = 5.0,
+    interval_sec: float = 0.15,
+) -> bool:
+    """
+    Poll callback until it returns True or timeout. Use instead of fixed time.sleep()
+    when asserting on async state (e.g. Neo4j ingest, Qdrant index).
+    Returns True if condition became true, False on timeout.
+    """
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if callback():
+            return True
+        time.sleep(interval_sec)
+    return False
 
 
 def call_retrieve(
@@ -14,10 +33,15 @@ def call_retrieve(
     user_id: Optional[str] = None,
     space_id: Optional[str] = None,
 ) -> tuple[str, List[Dict[str, Any]]]:
-    """Call memory_retriever.retrieve with optional user/space scope."""
+    """Call memory_retriever.retrieve with optional user/space scope. Sets auth context so store tenant filter matches."""
     from memory.memory_retriever import retrieve
     from memory.user_id import get_user_id
-    uid = user_id or AUTH_HEADERS.get("X-User-Id") or get_user_id()
+    from core.auth.context import set_current_user_id
+    uid = user_id or AUTH_HEADERS.get("X-User-Id")
+    if uid:
+        set_current_user_id(uid)
+    else:
+        uid = get_user_id()
     return retrieve(query, user_id=uid, space_id=space_id)
 
 

@@ -1,3 +1,11 @@
+"""
+Guest → Registered user migration.
+
+This module is the single entry point for migrating a guest user's data to a
+registered account. All flows that reassign ownership (e.g. after registration)
+should call migrate_guest_to_registered() only; do not perform ad-hoc Qdrant
+payload updates or Neo4j rewiring elsewhere.
+"""
 import uuid
 import logging
 from typing import Optional
@@ -9,13 +17,17 @@ from qdrant_client.http.models import UpdateResult, UpdateStatus
 
 logger = logging.getLogger(__name__)
 
+
 async def migrate_guest_to_registered(guest_id: uuid.UUID, registered_id: uuid.UUID) -> bool:
     """
     Migrates all data owned by a guest user to a registered user account.
+    Single entry point for guest→registered migration; use this instead of
+    ad-hoc Qdrant/Neo4j updates.
+
     This includes:
     1. Qdrant vector payloads (memories)
     2. Neo4j Knowledge Graph nodes (User relationships, Session ownership, Space ownership, Facts)
-    
+
     Returns True if migration succeeded.
     """
     guest_id_str = str(guest_id)

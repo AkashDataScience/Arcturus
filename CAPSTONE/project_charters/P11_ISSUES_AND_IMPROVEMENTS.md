@@ -1,27 +1,36 @@
 # P11 Mnemo — Issues & Improvements (Post First Run)
 
-**Run date:** 2026-03-15  
-**Config:** ASYNC_KG_INGEST=false  
-**Results:** 27 passed, 6 failed, 1 skipped  
+**Last run:** `./scripts/run_p11_automation_tests.sh` (2026-03-15)
 
 ---
 
-## Test Run Summary
+## Test Run Summary (Latest)
 
-| Task Group | Passed | Skipped | Failed |
-|------------|--------|---------|--------|
-| TG1 (Guest, Single Space) | 15+ | 1 | 1 |
-| TG2 (Guest, Multiple Spaces) | 6 | 0 | 3 |
-| TG3 (Logged-in, Migration) | 4 | 0 | 0 |
-| TG4 (Multi-install) | 2 | 0 | 0 |
+| Mode | Passed | Skipped | Failed |
+|------|--------|---------|--------|
+| **ASYNC_KG_INGEST=false** | 28 | 1 | 0 |
+| **ASYNC_KG_INGEST=true** | 25 | 1 | 3 |
 
-### Known Failures (2026-03-15)
+**Total selected:** 29 tests (p11_automation marker). Requires `docker-compose.tests.yml` (Qdrant on 6335, Neo4j on 7688).
 
-- **test_step_06_retrieve_when_met_jon** — Retrieval returns run/chronicle content (cat breeds) instead of user memories. Shared Qdrant may have run outputs that rank higher than RemMe memories.
-- **test_recommend_luna_returns_cat**, **test_recommend_living_room_returns_home_decor** — Recommend-space returns `__global__` when shared Qdrant has many global memories that outrank space-scoped ones in top-15.
-- **test_recommend_tuna_returns_cat** — Returns different space_id (pollution from other spaces in shared DB).
+### Fixes applied (this run)
 
-**Mitigation:** Run against an isolated/empty Qdrant for deterministic assertions. Suite is designed to surface bugs; many tests may fail initially in shared environments.
+- **docker-compose.tests.yml** — Added so the script can start isolated Qdrant (6335) and Neo4j (7688).
+- **Sequential scenario** — `clean_databases` skips cleaning for `TestSequentialRaleighJonFlow` so steps 2–6 see data from steps 1–5.
+- **Retrieval context** — Session-scoped `p11_embedding_mock` (word-overlap) so semantic search returns relevant memories without real LLM; `call_retrieve()` sets auth context (`set_current_user_id`) so store tenant filter matches the test user.
+
+### Known skip (expected)
+
+- **test_tg4_01_sync_trigger_after_add** — Skipped when sync server is not reachable (`SYNC_SERVER_URL`). Start sync server or accept skip in CI.
+
+### Known failures with ASYNC_KG_INGEST=true
+
+- **test_entities_list_returns_records** — Neo4j entities not yet present when assertion runs (async ingest delay).
+- **test_step_01_add_raleigh_memory** — Location fact / Raleigh entity not in Neo4j within `wait_for_condition` window.
+- **test_step_03_add_jon_google_memory** — Jon/Google/Durham entities not in Neo4j within window.
+
+**Cause:** With async KG ingest, entities/facts are written in the background; a 5s poll can be too short.  
+**Recommendation:** Increase `wait_for_condition` timeout for Neo4j assertions when `ASYNC_KG_INGEST=true`, or mark these tests as sync-only / allow flaky in async mode.
 
 ---
 
@@ -99,14 +108,31 @@
 
 ---
 
+---
+
+## Summary: Existing and New Issues / Recommendations
+
+| Item | Type | Description |
+|------|------|-------------|
+| **ASYNC_KG_INGEST=true** | Existing | 3 tests fail: Neo4j assertions run before async ingest completes. Increase timeout or treat async run as best-effort. |
+| **test_tg4_01_sync_trigger_after_add** | Existing | Skipped when sync server unreachable. Document or start sync server in CI. |
+| **Script dependency** | Fixed | `docker-compose.tests.yml` was missing; added so script runs. |
+| **Sequential scenario** | Fixed | DB was cleaned between steps; now skip clean for `TestSequentialRaleighJonFlow`. |
+| **Retrieval empty context** | Fixed | Embedding mock + auth context in `call_retrieve()` so retrieval sees test user's memories. |
+| **Warnings** | Low | Deprecation (SwigPy*, passlib/crypt). Non-blocking. |
+| **CI** | Recommendation | Add a CI job that runs `./scripts/run_p11_automation_tests.sh` (with test compose). Optionally allow ASYNC run to fail without failing the job, or increase Neo4j wait timeouts. |
+
+---
+
 ## How to Run
 
 ```bash
-# Run P11 automation suite (excludes slow tests)
+# Full suite (starts test DBs, runs sync then async mode)
 ./scripts/run_p11_automation_tests.sh
 
-# With ASYNC_KG_INGEST=true
-ASYNC_KG_INGEST=true uv run pytest -m p11_automation -v --tb=short
+# One-off with env already set (e.g. in CI)
+export QDRANT_URL=http://localhost:6335 NEO4J_URI=bolt://localhost:7688 NEO4J_USER=neo4j NEO4J_PASSWORD=test-password
+uv run pytest -m p11_automation -v --tb=short
 ```
 
-Requires Qdrant and Neo4j running. Tests skip if services are unavailable.
+Requires Docker for `docker-compose.tests.yml` (Qdrant 6335, Neo4j 7688). Without test ports, tests are skipped.

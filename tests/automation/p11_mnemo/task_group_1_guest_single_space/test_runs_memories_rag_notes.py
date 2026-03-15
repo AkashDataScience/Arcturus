@@ -1,5 +1,5 @@
 import pytest
-import time
+from tests.automation.p11_mnemo.helpers import wait_for_condition
 from memory.vector_store import get_vector_store
 from memory.knowledge_graph import get_knowledge_graph
 from memory.unified_extraction_schema import FactItem, UnifiedExtractionResult, MemoryCommand, EntityItem, EntityRelationshipItem
@@ -16,6 +16,18 @@ from core.auth.context import set_current_user_id
 @pytest.fixture(autouse=True)
 def mock_mnemo_enabled(monkeypatch):
     monkeypatch.setenv("MNEMO_ENABLED", "true")
+
+def _fact_value(driver, user_id: str, key: str = "location"):
+    """Return Fact value_text for user_id and key, or None."""
+    with driver.session() as session:
+        result = session.run(
+            "MATCH (u:User {user_id: $user_id})-[:HAS_FACT]->(f:Fact {key: $key}) RETURN f.value_text as val",
+            user_id=user_id,
+            key=key,
+        )
+        rec = result.single()
+        return rec["val"] if rec else None
+
 
 @pytest.fixture
 def mock_guest_user():
@@ -53,7 +65,10 @@ async def test_tg1_02_add_memory_location(mock_guest_user, mock_llm_extractor, n
         text="I moved from New Jersey to Raleigh, NC last year. I am loving it here as the weather is really great",
         space_id=SPACE_ID_GLOBAL
     ), background_tasks=None)
-    time.sleep(0.5)
+    wait_for_condition(
+        lambda: len(get_vector_store().get_all(filter_metadata={"user_id": mock_guest_user, "space_id": SPACE_ID_GLOBAL}, limit=10)) > 0,
+        timeout_sec=5.0,
+    )
     assert "memory" in mem_res, f"Unexpected response: {mem_res}"
     mem_id = mem_res["memory"].get("id")
     assert mem_id is not None, f"Memory ID missing in {mem_res}"
@@ -95,8 +110,15 @@ async def test_tg1_04_add_memory_entities(mock_guest_user, mock_llm_extractor, n
         text="My friend Jon recently moved from California to Durham. He works at Google. He may need help settling down",
         space_id=SPACE_ID_GLOBAL
     ), background_tasks=None)
-    time.sleep(0.5)
     mem_id = mem_res["memory"]["id"]
+    # Wait for Neo4j to have the relationship (async ingest)
+    def has_works_at():
+        with neo4j_test_driver.session() as session:
+            result = session.run(
+                "MATCH (p:Entity {canonical_name: 'jon'})-[:WORKS_AT]->(c:Entity {canonical_name: 'google'}) RETURN p, c"
+            )
+            return result.single() is not None
+    wait_for_condition(has_works_at, timeout_sec=5.0)
     
     # Verify Entities and relationships in Neo4j
     with neo4j_test_driver.session() as session:
@@ -115,7 +137,10 @@ async def test_tg1_09_fact_superseding(mock_guest_user, mock_llm_extractor, neo4
         facts=[FactItem(field_id="location", value_type="text", value="Raleigh", entity_ref="Concept::Raleigh")]
     )
     await add_memory(AddMemoryRequest(text="I live in Raleigh", space_id=SPACE_ID_GLOBAL), background_tasks=None)
-    time.sleep(0.5)
+    wait_for_condition(
+        lambda: _fact_value(neo4j_test_driver, mock_guest_user) is not None,
+        timeout_sec=5.0,
+    )
     
     # Update fact
     mock_llm_extractor.mock_result = UnifiedExtractionResult(
@@ -124,7 +149,10 @@ async def test_tg1_09_fact_superseding(mock_guest_user, mock_llm_extractor, neo4
         facts=[FactItem(field_id="location", value_type="text", value="Charlotte", entity_ref="Concept::Charlotte")]
     )
     await add_memory(AddMemoryRequest(text="I actually moved to Charlotte", space_id=SPACE_ID_GLOBAL), background_tasks=None)
-    time.sleep(0.5)
+    wait_for_condition(
+        lambda: _fact_value(neo4j_test_driver, mock_guest_user) == "Charlotte",
+        timeout_sec=5.0,
+    )
 
     with neo4j_test_driver.session() as session:
         # Check active fact

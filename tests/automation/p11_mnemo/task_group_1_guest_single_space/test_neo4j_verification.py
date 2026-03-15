@@ -12,6 +12,7 @@ from tests.automation.p11_mnemo.helpers import (
     neo4j_get_facts,
     neo4j_has_entity,
     neo4j_has_fact,
+    wait_for_condition,
 )
 
 USER_ID = AUTH_HEADERS["X-User-Id"]
@@ -31,11 +32,15 @@ class TestNeo4jEntityVerification:
             },
         )
         assert r.status_code == 200
-        import time
-        time.sleep(0.5)
-        assert neo4j_has_entity(USER_ID, "Jon", "Person")
-        assert neo4j_has_entity(USER_ID, "Google", "Company")
-        assert neo4j_has_entity(USER_ID, "Durham", "City")
+        ok = wait_for_condition(
+            lambda: (
+                neo4j_has_entity(USER_ID, "Jon", "Person")
+                and neo4j_has_entity(USER_ID, "Google", "Company")
+                and neo4j_has_entity(USER_ID, "Durham", "City")
+            ),
+            timeout_sec=5.0,
+        )
+        assert ok, "Neo4j should have Jon, Google, Durham entities after add"
 
     def test_add_raleigh_creates_location_fact(self, client):
         """Add Raleigh memory; verify location fact in Neo4j."""
@@ -47,9 +52,11 @@ class TestNeo4jEntityVerification:
             },
         )
         assert r.status_code == 200
-        import time
-        time.sleep(0.5)
-        assert neo4j_has_fact(USER_ID, "location", "raleigh") or neo4j_has_entity(USER_ID, "Raleigh", "City")
+        ok = wait_for_condition(
+            lambda: neo4j_has_fact(USER_ID, "location", "raleigh") or neo4j_has_entity(USER_ID, "Raleigh", "City"),
+            timeout_sec=5.0,
+        )
+        assert ok, "Neo4j should have location fact or Raleigh entity after add"
 
 
 @requires_qdrant_neo4j
@@ -62,8 +69,7 @@ class TestNeo4jFactVerification:
             "/api/remme/add",
             json={"text": "I live in Raleigh, NC. Great weather here.", "category": "general"},
         )
-        import time
-        time.sleep(0.5)
+        wait_for_condition(lambda: len(neo4j_get_facts(USER_ID)) > 0, timeout_sec=5.0)
         facts = neo4j_get_facts(USER_ID)
         # May have location fact
         assert isinstance(facts, list)
@@ -74,8 +80,7 @@ class TestNeo4jFactVerification:
             "/api/remme/add",
             json={"text": "Jon works at Google in Durham", "category": "general"},
         )
-        import time
-        time.sleep(0.5)
+        wait_for_condition(lambda: len(neo4j_get_entities(USER_ID)) > 0, timeout_sec=5.0)
         entities = neo4j_get_entities(USER_ID)
         assert isinstance(entities, list)
         # Mock produces Jon, Google, Durham
