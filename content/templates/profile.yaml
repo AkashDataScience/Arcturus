@@ -1,0 +1,64 @@
+# Profile Template
+# Used for person, company, or organization profiles and biographies
+
+name: "profile"
+description: "A comprehensive profile template for people, companies, and organizations"
+
+metadata:
+  title_pattern: "Profile: {query}"
+  suggested_queries:
+    - "who is"
+    - "biography of"
+    - "company profile"
+    - "organization overview"
+    - "founder of"
+  target_length: "medium"  # short, medium, long
+  estimated_render_time: "3-5s"
+
+# Section configuration - defines which agents to run and in what order
+sections:
+  - type: "overview"
+    title: "Overview"
+    required: true
+    priority: 1
+    description: "Key facts, background, and summary"
+    
+  - type: "detail"
+    title: "Background & History"
+    required: true
+    priority: 2
+    description: "Detailed history, milestones, achievements"
+    
+  - type: "data"
+    title: "Key Facts & Figures"
+    required: false
+    priority: 3
+    description: "Statistics, timeline, notable numbers (for companies: revenue, employees, etc.)"
+    
+  - type: "comparison"
+    title: "Context & Comparisons"
+    required: false
+    priority: 4
+    description: "Comparison with peers or related entities"
+    conditional: "has_peers"
+    
+  - type: "source"
+    title: "References & Further Reading"
+    required: true
+    priority: 5
+    description: "Authoritative sources and additional information"
+
+# Rendering configuration
+rendering:
+  max_sections: 5
+  citation_style: "inline"
+  include_toc: true
+  export_formats: ["html", "markdown", "pdf"]
+  timeline_support: true
+  
+# Quality gates
+validation:
+  min_sections: 2
+  require_citations: true
+  require_biographical_data: true  # basic facts must be present
+  max_response_time: "5s"

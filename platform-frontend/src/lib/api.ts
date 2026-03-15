@@ -331,4 +331,35 @@ export const api = {
         );
         return data;
     },
+
+    // P03 Spark Pages API
+    getPages: async (): Promise<any[]> => {
+        const res = await axios.get(`${API_BASE}/pages`);
+        // Backend returns paginated response: { items: [], total: N, page: 1, per_page: 25 }
+        return res.data.items || res.data;
+    },
+
+    getPage: async (pageId: string): Promise<any> => {
+        const res = await axios.get(`${API_BASE}/pages/${pageId}`);
+        return res.data;
+    },
+
+    generatePage: async (payload: { query: string; template?: string; created_by?: string }): Promise<any> => {
+        const res = await axios.post(`${API_BASE}/pages/generate`, payload);
+        return res.data;
+    },
+
+    getPageJob: async (jobId: string): Promise<any> => {
+        const res = await axios.get(`${API_BASE}/pages/jobs/${jobId}`);
+        return res.data;
+    },
+
+    getAllFolders: async (): Promise<any[]> => {
+        const res = await axios.get(`${API_BASE}/pages/all-folders`);
+        return res.data;
+    },
+
+    deletePage: async (pageId: string): Promise<void> => {
+        await axios.delete(`${API_BASE}/pages/${pageId}`);
+    },
 };

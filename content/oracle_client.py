@@ -43,15 +43,15 @@ def _transform_oracle_result(oracle_item: Dict[str, Any], idx: int) -> Dict[str,
     tables = _extract_tables_from_content(content, idx)
     media = _extract_media_from_content(content, url, idx)
     
-    # Generate citation ID
-    cid = f"R{idx:03d}_{url.split('/')[-1][:8]}" if url else f"R{idx:03d}"
+    # Generate citation ID — use clean numeric ID, not URL fragment
+    cid = f"R{idx:03d}"
     
     return {
         "citation_id": cid,
         "url": url,
         "title": title,
-        "extracted_text": content[:2000],  # Limit text length
-        "snippet": content[:300] if content else f"Content from {title}",
+        "extracted_text": content[:3000],  # LLM context budget: 3K chars/source keeps total prompt manageable across 5-10 sources
+        "snippet": content[:300] if content else f"Content from {title}",  # UI preview only
         "published_at": "2025-01-15T00:00:00Z",  # Real timestamp would come from extraction
         "source_type": "web_article",
         "credibility_score": 0.85,  # Would be calculated based on domain, etc.
@@ -118,8 +118,47 @@ def _extract_media_from_content(content: str, url: str, idx: int) -> List[Dict[s
     return media
 
 
-def search_oracle(query: str, k: int = 5, timeout: float = 10.0) -> Dict[str, Any]:
-    """Search using real P02 Oracle system with fallback to mock for development."""
+async def async_search_oracle(query: str, k: int = 5) -> Dict[str, Any]:
+    """Async-native Oracle search — call this from async contexts (FastAPI handlers, async tasks).
+    Directly awaits the real Oracle adapter without any thread-pool workaround.
+    """
+    if _is_test_environment():
+        return _deterministic_mock_oracle_search(query, k)
+
+    if get_oracle_adapter is None:
+        return _mock_oracle_search(query, k)
+
+    try:
+        oracle_adapter = get_oracle_adapter()
+        start_time = time.time()
+        oracle_result = await oracle_adapter.search(query, k)
+
+        oracle_items = oracle_result.get("results", [])
+        transformed_results = [
+            _transform_oracle_result(item, idx + 1)
+            for idx, item in enumerate(oracle_items[:k])
+        ]
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        return {
+            "query_id": str(uuid.uuid4()),
+            "results": transformed_results,
+            "metrics": {
+                "elapsed_ms": elapsed_ms,
+                "num_sources": len(transformed_results),
+                "oracle_status": oracle_result.get("status", "success"),
+                "real_data": True,
+            },
+            "oracle_summary": oracle_result.get("summary", ""),
+        }
+    except Exception as e:
+        print(f"[async_search_oracle] Oracle integration failed: {e}, falling back to mock")
+        return _mock_oracle_search(query, k)
+
+
+def search_oracle(query: str, k: int = 5, timeout: float = 60.0) -> Dict[str, Any]:
+    """Search using real P02 Oracle system with fallback to mock for development.
+    NOTE: If calling from an async context, prefer await async_search_oracle() instead.
+    """
     
     # Use deterministic mock for tests to ensure idempotency
     if _is_test_environment():
@@ -174,7 +213,7 @@ def search_oracle(query: str, k: int = 5, timeout: float = 10.0) -> Dict[str, An
         }
         
     except Exception as e:
-        print(f"Oracle integration failed: {e}, falling back to mock")
+        print(f"[search_oracle] Oracle integration failed: {e}, falling back to mock")
         return _mock_oracle_search(query, k)
 
 

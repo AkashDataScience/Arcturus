@@ -1,0 +1,64 @@
+# Research Brief Template
+# Used for academic research, scientific studies, and research summaries
+
+name: "research_brief"
+description: "A research-focused template for academic and scientific content"
+
+metadata:
+  title_pattern: "Research Brief: {query}"
+  suggested_queries:
+    - "latest research on"
+    - "scientific studies about"
+    - "academic findings"
+    - "research paper summary"
+    - "study results"
+  target_length: "medium"  # short, medium, long
+  estimated_render_time: "3-5s"
+
+# Section configuration - defines which agents to run and in what order
+sections:
+  - type: "overview"
+    title: "Research Summary"
+    required: true
+    priority: 1
+    description: "Key findings and research objectives"
+    
+  - type: "detail"
+    title: "Methodology & Findings"
+    required: true
+    priority: 2
+    description: "Research methods and detailed results"
+    
+  - type: "data"
+    title: "Data & Statistics"
+    required: false
+    priority: 3
+    description: "Quantitative results, charts, and data visualizations"
+    
+  - type: "comparison"
+    title: "Related Research"
+    required: false
+    priority: 4
+    description: "Comparison with other studies and opposing viewpoints"
+    conditional: "has_related_studies"
+    
+  - type: "source"
+    title: "Citations & Papers"
+    required: true
+    priority: 5
+    description: "Academic sources, research papers, and peer-reviewed publications"
+
+# Rendering configuration
+rendering:
+  max_sections: 5
+  citation_style: "academic"  # APA/MLA style citations
+  include_toc: true
+  export_formats: ["html", "markdown", "pdf"]
+  academic_formatting: true
+  
+# Quality gates
+validation:
+  min_sections: 2
+  require_citations: true
+  require_academic_sources: true  # peer-reviewed or authoritative sources only
+  max_response_time: "5s"

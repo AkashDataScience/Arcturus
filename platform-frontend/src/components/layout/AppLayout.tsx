@@ -50,6 +50,7 @@ import { AdminDashboard } from '@/features/admin/AdminDashboard';
 import { SwarmGraphView } from '@/features/swarm/SwarmGraphView';
 import { AgentPeekPanel } from '@/features/swarm/AgentPeekPanel';
 import { useSwarmStore } from '@/features/swarm/useSwarmStore';
+import { PagesDashboard } from '@/features/pages/components/PagesDashboard';
 
 export const AppLayout: React.FC = () => {
     // Mount useVoice at the root so wake-word events trigger the Echo tab
@@ -254,6 +255,8 @@ export const AppLayout: React.FC = () => {
                                     <SkillsDashboard />
                                 ) : sidebarTab === 'studio' ? (
                                     <ForgeDashboard />
+                                ) : sidebarTab === 'pages' ? (
+                                    <PagesDashboard />
                                 ) : sidebarTab === 'console' ? (
                                     <MissionControl />
                                 ) : sidebarTab === 'admin' ? (

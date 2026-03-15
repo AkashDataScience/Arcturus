@@ -2,11 +2,13 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { ThemeProvider } from '@/components/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Meteors } from '@/components/ui/meteors';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import axios from 'axios';
 import { ArcturusLogo } from '@/components/common/ArcturusLogo';
 import { useAppStore } from './store';
 import { FeatureFlagsProvider } from '@/hooks/useFeatureFlags';
+
+const SharedPageView = lazy(() => import('@/features/pages/components/SharedPageView'));
 
 const API_BASE = 'http://localhost:8000';
 
@@ -31,9 +33,13 @@ function SplashScreen() {
 }
 
 function App() {
+  const isSharedPage = window.location.pathname.startsWith('/shared/');
   const [isBackendReady, setIsBackendReady] = useState(false);
 
   useEffect(() => {
+    // Skip backend health check for public shared pages
+    if (isSharedPage) return;
+
     let attempts = 0;
     const maxAttempts = 30; // 30 seconds max
 
@@ -60,7 +66,7 @@ function App() {
     };
 
     checkBackend();
-  }, []);
+  }, [isSharedPage]);
 
   // Initialize Auth after backend is ready
   useEffect(() => {
@@ -68,6 +74,19 @@ function App() {
       useAppStore.getState().initAuth();
     }
   }, [isBackendReady]);
+
+  // Handle shared page route without React Router
+  if (isSharedPage) {
+    return (
+      <ThemeProvider defaultTheme="dark">
+        <TooltipProvider>
+          <Suspense fallback={<div className="h-screen flex items-center justify-center bg-background" />}>
+            <SharedPageView />
+          </Suspense>
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+  }
 
   return (
     <ThemeProvider defaultTheme="dark">

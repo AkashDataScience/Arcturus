@@ -1,0 +1,64 @@
+# Market Analysis Template
+# Used for market trends, industry analysis, competitive landscape, and forecasts
+
+name: "market_analysis"
+description: "A comprehensive market analysis template covering trends, competitors, and forecasts"
+
+metadata:
+  title_pattern: "Market Analysis: {query}"
+  suggested_queries:
+    - "market trends"
+    - "industry analysis"
+    - "competitive landscape"
+    - "market forecast"
+    - "industry outlook"
+  target_length: "long"  # short, medium, long
+  estimated_render_time: "4-6s"
+
+# Section configuration - defines which agents to run and in what order
+sections:
+  - type: "overview"
+    title: "Market Overview"
+    required: true
+    priority: 1
+    description: "Market size, key players, and current state"
+    
+  - type: "data"
+    title: "Key Metrics & Trends"
+    required: true
+    priority: 2
+    description: "Market size, growth rates, forecasts with charts"
+    
+  - type: "comparison"
+    title: "Competitive Analysis"
+    required: true
+    priority: 3
+    description: "Major players comparison and market positioning"
+    
+  - type: "detail"
+    title: "Detailed Analysis"
+    required: true
+    priority: 4
+    description: "In-depth examination of trends, drivers, and challenges"
+    
+  - type: "source"
+    title: "Sources & Research"
+    required: true
+    priority: 5
+    description: "Market research reports and authoritative sources"
+
+# Rendering configuration
+rendering:
+  max_sections: 5
+  citation_style: "inline"
+  include_toc: true
+  export_formats: ["html", "markdown", "pdf"]
+  chart_emphasis: true
+  
+# Quality gates
+validation:
+  min_sections: 3
+  require_citations: true
+  require_data_element: true  # must have charts/tables
+  require_numeric_data: true  # market size, growth rates, etc.
+  max_response_time: "6s"

@@ -2,7 +2,7 @@ import React from 'react';
 import {
     Plus, Clock, Search, Trash2, Database, Box, PlayCircle, Brain,
     LayoutGrid, Newspaper, GraduationCap, Settings, Code2, Loader2, Notebook,
-    CalendarClock, Terminal, Zap, Wand2, Shield, FolderOpen, Mic, Network
+    CalendarClock, Terminal, Zap, Wand2, Shield, FolderOpen, Mic, Network, FileText
 } from 'lucide-react';
 import { useFeatureFlags } from '@/hooks/useFeatureFlags';
 import { Button } from "@/components/ui/button";
@@ -26,11 +26,12 @@ import { NewsPanel } from '@/components/sidebar/NewsPanel';
 import { GraphPanel } from '@/components/sidebar/GraphPanel';
 import { StudioSidebar } from '@/features/studio/StudioSidebar';
 import { SwarmSidebar } from '@/features/swarm/SwarmSidebar';
+import { PagesSidebar } from '@/features/pages/components/PagesSidebar';
 
 const NavIcon = ({ icon: Icon, label, tab, active, onClick }: {
     icon: any,
     label: string,
-    tab?: 'runs' | 'rag' | 'notes' | 'mcp' | 'remme' | 'explorer' | 'graph' | 'apps' | 'news' | 'learn' | 'settings' | 'ide' | 'scheduler' | 'console' | 'skills' | 'canvas' | 'studio' | 'admin' | 'echo' | 'swarm',
+    tab?: 'runs' | 'rag' | 'notes' | 'mcp' | 'remme' | 'explorer' | 'graph' | 'apps' | 'news' | 'learn' | 'settings' | 'ide' | 'scheduler' | 'console' | 'skills' | 'canvas' | 'studio' | 'admin' | 'echo' | 'swarm' | 'pages',
     active: boolean,
     onClick: () => void
 }) => {
@@ -185,6 +186,7 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
                     <NavIcon icon={CalendarClock} label="Scheduler" tab="scheduler" active={sidebarTab === 'scheduler'} onClick={() => setSidebarTab('scheduler')} />
                     <NavIcon icon={Zap} label="Skills" tab="skills" active={sidebarTab === 'skills'} onClick={() => setSidebarTab('skills')} />
                     <NavIcon icon={Wand2} label="Forge" tab="studio" active={sidebarTab === 'studio'} onClick={() => setSidebarTab('studio')} />
+                    <NavIcon icon={FileText} label="Pages" tab="pages" active={sidebarTab === 'pages'} onClick={() => setSidebarTab('pages')} />
                     <NavIcon icon={Terminal} label="Console" tab="console" active={sidebarTab === 'console'} onClick={() => setSidebarTab('console')} />
                     <NavIcon icon={Newspaper} label="News" tab="news" active={sidebarTab === 'news'} onClick={() => setSidebarTab('news')} />
                     <NavIcon icon={GraduationCap} label="Learn" tab="learn" active={sidebarTab === 'learn'} onClick={() => setSidebarTab('learn')} />
@@ -415,6 +417,7 @@ export const Sidebar: React.FC<{ hideSubPanel?: boolean }> = ({ hideSubPanel }) 
                     {sidebarTab === 'echo' && <EchoPanel />}
                     {sidebarTab === 'studio' && <StudioSidebar />}
                     {sidebarTab === 'swarm' && <SwarmSidebar />}
+                    {sidebarTab === 'pages' && <PagesSidebar />}
                     {/* Persist AppsSidebar to prevent reloading app components */}
                     <div style={{ display: sidebarTab === 'apps' ? 'block' : 'none', height: '100%' }}>
                         <AppsSidebar />

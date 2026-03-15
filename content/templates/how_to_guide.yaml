@@ -1,0 +1,63 @@
+# How-To Guide Template
+# Used for step-by-step instructions, tutorials, and procedural content
+
+name: "how_to_guide"
+description: "A step-by-step instructional template for tutorials and guides"
+
+metadata:
+  title_pattern: "Guide: {query}"
+  suggested_queries:
+    - "how to deploy"
+    - "tutorial for"
+    - "step by step"
+    - "getting started with"
+  target_length: "long"  # short, medium, long
+  estimated_render_time: "4-6s"
+
+# Section configuration - defines which agents to run and in what order
+sections:
+  - type: "overview"
+    title: "Overview"
+    required: true
+    priority: 1
+    description: "Introduction and prerequisites"
+    
+  - type: "detail"
+    title: "Step-by-Step Instructions"
+    required: true
+    priority: 2
+    description: "Detailed procedural steps with explanations"
+    
+  - type: "data"
+    title: "Examples & Code Samples"
+    required: false
+    priority: 3
+    description: "Working examples and code snippets"
+    
+  - type: "comparison"
+    title: "Alternative Approaches"
+    required: false
+    priority: 4
+    description: "Different methods or tools that could be used"
+    conditional: "has_alternatives"
+    
+  - type: "source"
+    title: "Resources & Further Reading"
+    required: true
+    priority: 5
+    description: "Additional tutorials, documentation, and references"
+
+# Rendering configuration
+rendering:
+  max_sections: 5
+  citation_style: "inline"
+  include_toc: true
+  export_formats: ["html", "markdown", "pdf"]
+  code_highlighting: true
+  
+# Quality gates
+validation:
+  min_sections: 2
+  require_citations: true
+  require_examples: true  # at least one code sample or example
+  max_response_time: "6s"

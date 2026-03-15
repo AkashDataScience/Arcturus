@@ -307,6 +307,7 @@ from routers import runs as runs_router
 from routers import settings as settings_router
 from routers import explorer as explorer_router
 from routers import mcp as mcp_router
+from routers import pages as pages_router
 
 app.include_router(runs_router.router, prefix="/api")
 app.include_router(rag_router.router, prefix="/api")
@@ -318,6 +319,7 @@ app.include_router(apps_router.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(explorer_router.router, prefix="/api")
 app.include_router(mcp_router.router, prefix="/api")
+app.include_router(pages_router.router, prefix="/api")
 
 # Phase 5: Authentication endpoints
 from routers import auth as auth_router

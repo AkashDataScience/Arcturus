@@ -10,8 +10,32 @@ import uuid
 import json
 from functools import lru_cache
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from content import page_generator
+
+# Import MongoDB and Qdrant storage (gracefully handle unavailable)
+try:
+    from storage.pages_repository import get_pages_repository
+    from storage.pages_vector_store import get_page_sections_vector_store
+    
+    # Initialize repositories (will be None if MongoDB/Qdrant unavailable)
+    pages_repo = get_pages_repository()
+    vector_store = get_page_sections_vector_store()
+    
+    if pages_repo:
+        print("[pages] ✅ MongoDB pages repository connected")
+    else:
+        print("[pages] ⚠️ MongoDB unavailable, using file-based storage")
+    
+    if vector_store:
+        print("[pages] ✅ Qdrant vector store connected")
+    else:
+        print("[pages] ⚠️ Qdrant unavailable, section search disabled")
+except Exception as e:
+    print(f"[pages] ⚠️ Storage initialization failed: {e}")
+    pages_repo = None
+    vector_store = None
 
 router = APIRouter(prefix="/pages", tags=["Pages"])
 
@@ -23,7 +47,7 @@ RATE_LIMITS: Dict[str, List[datetime]] = {}  # Simple rate limiting
 # Enhanced validation models
 class GenerateRequest(BaseModel):
     query: str
-    template: Optional[str] = "topic_overview"
+    template: Optional[str] = None  # None triggers auto-detection
     
     @validator('query')
     def validate_query(cls, v):
@@ -35,6 +59,9 @@ class GenerateRequest(BaseModel):
     
     @validator('template')
     def validate_template(cls, v):
+        # Allow None for auto-detection
+        if v is None:
+            return v
         allowed = ["topic_overview", "product_comparison", "how_to_guide", "market_analysis", "research_brief", "profile"]
         if v not in allowed:
             raise ValueError(f'Template must be one of: {allowed}')
@@ -116,45 +143,157 @@ class WidgetRequest(BaseModel):
 JOBS: Dict[str, Dict[str, Any]] = {}
 
 
+async def auto_detect_template(query: str) -> str:
+    """
+    Use LLM to intelligently determine the best template for the given query.
+    Implements P03 Section 3.1: Dynamic section generation - auto-determine based on query type.
+    
+    Templates:
+    - product_comparison: Comparing products, services, or options
+    - how_to_guide: Step-by-step instructions or tutorials
+    - market_analysis: Market trends, industry analysis, competitive landscape
+    - research_brief: Academic research, studies, scientific findings
+    - profile: Biography or overview of a person, company, or organization
+    - topic_overview: General informational content
+    """
+    import os
+    from google import genai
+    from google.genai import types
+    
+    # Check for API key
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        print("[auto_detect_template] No GEMINI_API_KEY found, falling back to topic_overview")
+        return "topic_overview"
+    
+    # Build classification prompt
+    classification_prompt = f"""Classify this user query into exactly ONE of these template types. Respond with ONLY the template name, nothing else.
+
+Templates:
+- product_comparison: Comparing products/services/options (e.g., "iPhone vs Android", "best CRM tools")
+- how_to_guide: Step-by-step instructions (e.g., "how to deploy React app", "tutorial for...")
+- market_analysis: Market/industry analysis (e.g., "AI market trends", "smartphone industry forecast")
+- research_brief: Academic/scientific research (e.g., "climate change studies", "latest AI research")
+- profile: Person/company/organization profile (e.g., "who is Elon Musk", "Apple company history")
+- topic_overview: General informational content (default for other queries)
+
+User Query: {query}
+
+Template (respond with ONLY the template name):"""
+
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=classification_prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.1,  # Low temperature for consistent classification
+                max_output_tokens=20,  # We only need one template name
+            )
+        )
+        
+        # Check if response has text
+        if not response.text:
+            print("[auto_detect_template] Empty response from LLM, falling back to topic_overview")
+            return "topic_overview"
+        
+        template = response.text.strip().lower()
+        
+        # Validate the response
+        valid_templates = ["product_comparison", "how_to_guide", "market_analysis", 
+                          "research_brief", "profile", "topic_overview"]
+        
+        if template in valid_templates:
+            print(f"[auto_detect_template] Detected template: {template} for query: {query[:50]}...")
+            return template
+        else:
+            print(f"[auto_detect_template] Invalid template '{template}', falling back to topic_overview")
+            return "topic_overview"
+            
+    except Exception as e:
+        print(f"[auto_detect_template] LLM call failed: {e}, falling back to topic_overview")
+        return "topic_overview"
+
+
 async def _run_generate_job(job_id: str, req: GenerateRequest) -> None:
     JOBS[job_id]["status"] = "running"
     try:
-        page = await page_generator.generate_page(req.query, template=req.template, created_by="api")
+        # Auto-detect template if not explicitly provided using LLM
+        template = req.template if req.template else await auto_detect_template(req.query)
+        
+        # Store detected template in job for transparency
+        JOBS[job_id]["detected_template"] = template
+        JOBS[job_id]["template_auto_detected"] = req.template is None
+        
+        page = await page_generator.generate_page(req.query, template=template, created_by="api")
         JOBS[job_id]["status"] = "done"
         JOBS[job_id]["page_id"] = page.get("id")
         
-        # Store page metadata for list endpoints
+        # Store page in MongoDB if available, otherwise fallback to in-memory
         page_id = page.get("id")
-        PAGES_META[page_id] = {
-            "title": page.get("title", "Untitled"),
-            "created_at": page.get("metadata", {}).get("created_at", "now"),
-            "updated_at": page.get("metadata", {}).get("created_at", "now"),
-            "query": page.get("query"),
-            "template": page.get("template"),
-            "owner_id": page.get("metadata", {}).get("created_by"),
-            "tags": [],
-            "folder_id": None,
-            "visibility": "private",
-            "deleted": False
-        }
+        
+        if pages_repo:
+            # Save to MongoDB
+            try:
+                pages_repo.save_page(page)
+                print(f"[pages] ✅ Saved page {page_id} to MongoDB")
+            except Exception as e:
+                print(f"[pages] ⚠️ Failed to save to MongoDB: {e}, using in-memory fallback")
+                # Fallback to in-memory
+                _store_page_metadata_inmemory(page_id, page)
+        else:
+            # Use in-memory storage
+            _store_page_metadata_inmemory(page_id, page)
+        
+        # Store section embeddings in Qdrant if available (for AI copilot features)
+        if vector_store and page.get("sections"):
+            try:
+                # TODO: Generate embeddings for sections
+                # For now, skip vector storage until we have embedding generation
+                pass
+            except Exception as e:
+                print(f"[pages] ⚠️ Failed to store section vectors: {e}")
         
     except Exception as exc:  # keep broad to capture failures for the job tracker
         JOBS[job_id]["status"] = "failed"
         JOBS[job_id]["error"] = str(exc)
 
 
-@router.post("/pages/generate", status_code=202)
+def _store_page_metadata_inmemory(page_id: str, page: Dict[str, Any]):
+    """Store page metadata in in-memory PAGES_META dict (fallback storage)"""
+    now_iso = datetime.utcnow().isoformat() + "Z"
+    PAGES_META[page_id] = {
+        "title": page.get("title", "Untitled"),
+        "created_at": page.get("metadata", {}).get("created_at") or now_iso,
+        "updated_at": page.get("metadata", {}).get("created_at") or now_iso,
+        "query": page.get("query"),
+        "template": page.get("template"),
+        "owner_id": page.get("metadata", {}).get("created_by"),
+        "tags": [],
+        "folder_id": None,
+        "visibility": "private",
+        "deleted": False
+    }
+
+
+@router.post("/generate", status_code=202)
 async def generate_page(req: GenerateRequest):
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=400, detail="query is required")
 
     job_id = uuid.uuid4().hex
-    JOBS[job_id] = {"status": "pending", "page_id": None, "error": None}
+    JOBS[job_id] = {
+        "status": "pending", 
+        "page_id": None, 
+        "error": None,
+        "detected_template": None,
+        "template_auto_detected": False
+    }
 
     # schedule background generation on the event loop
     asyncio.create_task(_run_generate_job(job_id, req))
 
-    return {"job_id": job_id, "status_url": f"/pages/jobs/{job_id}"}
+    return {"job_id": job_id, "status_url": f"/jobs/{job_id}"}
 
 
 @router.get("/jobs/{job_id}")
@@ -165,16 +304,100 @@ async def get_job_status(job_id: str):
     return job
 
 
+@router.get("/templates")
+async def get_available_templates():
+    """
+    Get list of available templates and their auto-detection patterns.
+    Helps users understand how queries are interpreted.
+    """
+    return {
+        "templates": [
+            {
+                "id": "topic_overview",
+                "name": "Topic Overview",
+                "description": "General overview of a topic with structured sections",
+                "example_queries": [
+                    "artificial intelligence trends 2026",
+                    "blockchain technology",
+                    "quantum computing basics"
+                ],
+                "default": True
+            },
+            {
+                "id": "product_comparison",
+                "name": "Product Comparison",
+                "description": "Side-by-side comparison of products, services, or options",
+                "detection_keywords": ["vs", "versus", "compare", "difference between", "which is better"],
+                "example_queries": [
+                    "iPhone vs Android",
+                    "compare React and Vue",
+                    "Python versus JavaScript for beginners"
+                ]
+            },
+            {
+                "id": "how_to_guide",
+                "name": "How-To Guide",
+                "description": "Step-by-step instructional guide",
+                "detection_keywords": ["how to", "how do i", "tutorial", "guide to", "step by step"],
+                "example_queries": [
+                    "how to deploy React app",
+                    "tutorial for machine learning",
+                    "step by step guide to Docker"
+                ]
+            },
+            {
+                "id": "market_analysis",
+                "name": "Market Analysis",
+                "description": "Market trends, forecasts, and industry analysis",
+                "detection_keywords": ["market analysis", "market trends", "industry analysis", "market forecast"],
+                "example_queries": [
+                    "AI market analysis 2026",
+                    "electric vehicle industry trends",
+                    "cryptocurrency market forecast"
+                ]
+            },
+            {
+                "id": "research_brief",
+                "name": "Research Brief",
+                "description": "Academic or scientific research summary",
+                "detection_keywords": ["research", "study", "findings", "evidence", "literature review"],
+                "example_queries": [
+                    "climate change research findings",
+                    "COVID-19 vaccine study results",
+                    "machine learning research 2025"
+                ]
+            },
+            {
+                "id": "profile",
+                "name": "Profile",
+                "description": "Person, company, or organization profile",
+                "detection_keywords": ["who is", "profile of", "biography", "company profile", "about"],
+                "example_queries": [
+                    "who is Elon Musk",
+                    "OpenAI company profile",
+                    "biography of Marie Curie"
+                ]
+            }
+        ],
+        "auto_detection": True,
+        "note": "If no template is specified, the system automatically selects the best template based on query patterns"
+    }
+
+
 # --- Stubbed collection, folder, versioning, and collaboration endpoints ---
 
 
 class PageListItem(BaseModel):
     id: str
-    title: str
-    excerpt: Optional[str] = None
-    tags: List[str] = []
+    query: str
+    template: str = "topic_overview"
+    status: str = "complete"
+    sections: List[Dict[str, Any]] = []
+    citations: Dict[str, Any] = {}
+    created_at: str
+    created_by: str
     folder_id: Optional[str] = None
-    owner_id: Optional[str] = None
+    tags: List[str] = []
     updated_at: Optional[str] = None
 
 
@@ -195,17 +418,106 @@ TAGS_REGISTRY: Dict[str, Dict[str, Any]] = {}  # Global tag registry with metada
 TEAM_MEMBERS: Dict[str, Dict[str, Any]] = {}  # Team collaboration data
 
 
+def _load_existing_pages():
+    """
+    Load existing pages from JSON files into PAGES_META on startup.
+    This ensures pages persist across server restarts.
+    """
+    try:
+        pages_dir = Path(__file__).resolve().parents[1] / "data" / "pages"
+        if not pages_dir.exists():
+            print(f"[pages] Pages directory not found: {pages_dir}")
+            return
+        
+        loaded_count = 0
+        for json_file in pages_dir.glob("page_*.json"):
+            try:
+                page_data = json.loads(json_file.read_text(encoding="utf-8"))
+                page_id = page_data.get("id")
+                
+                if page_id and page_id not in PAGES_META:
+                    # Use proper ISO timestamp or fallback to current time
+                    created_at = page_data.get("metadata", {}).get("created_at")
+                    if not created_at or created_at == "":
+                        created_at = datetime.utcnow().isoformat() + "Z"
+                    
+                    PAGES_META[page_id] = {
+                        "title": page_data.get("title", "Untitled"),
+                        "created_at": created_at,
+                        "updated_at": created_at,
+                        "query": page_data.get("query", ""),
+                        "template": page_data.get("template", "topic_overview"),
+                        "owner_id": page_data.get("metadata", {}).get("created_by", "unknown"),
+                        "tags": [],
+                        "folder_id": None,
+                        "visibility": "private",
+                        "deleted": False
+                    }
+                    loaded_count += 1
+            except Exception as e:
+                print(f"[pages] Failed to load {json_file.name}: {e}")
+                continue
+        
+        print(f"[pages] ✅ Loaded {loaded_count} existing pages into memory")
+    except Exception as e:
+        print(f"[pages] ⚠️ Failed to load existing pages: {e}")
+
+
+# Load existing pages on module import
+_load_existing_pages()
+
+
 @router.get("", response_model=ListResponse)
 async def list_pages(q: Optional[str] = None, folder_id: Optional[str] = None, tags: Optional[str] = None, page: int = 1, per_page: int = 25):
-    """List pages with optional filters. Shows folder relationships clearly."""
+    """List pages with optional filters. Uses MongoDB when available."""
     
-    # Try to delegate to page_generator if available
-    try:
-        if hasattr(page_generator, "list_pages"):
-            results = page_generator.list_pages(q=q, folder_id=folder_id, tags=tags, page=page, per_page=per_page)
-            return results
-    except Exception:
-        pass
+    # Use MongoDB if available
+    if pages_repo:
+        try:
+            skip = (page - 1) * per_page
+            tag_list = tags.split(",") if tags else None
+            
+            pages = pages_repo.get_pages(
+                folder_id=folder_id,
+                tags=tag_list,
+                search_query=q,
+                limit=per_page,
+                skip=skip,
+                include_deleted=False
+            )
+            
+            total = pages_repo.count_pages(
+                folder_id=folder_id,
+                tags=tag_list,
+                include_deleted=False
+            )
+            
+            # Transform MongoDB pages to match frontend interface
+            transformed_pages = []
+            for pg in pages:
+                transformed_pages.append({
+                    "id": pg.get("id"),
+                    "query": pg.get("query", ""),
+                    "template": pg.get("template", "topic_overview"),
+                    "status": pg.get("status", "complete"),
+                    "sections": pg.get("sections", []),
+                    "citations": pg.get("citations", {}),
+                    "created_at": pg.get("created_at") or pg.get("metadata", {}).get("created_at", ""),
+                    "created_by": pg.get("created_by") or pg.get("metadata", {}).get("created_by", ""),
+                    "folder_id": pg.get("folder_id"),
+                    "tags": pg.get("tags", []),
+                    "updated_at": pg.get("updated_at")
+                })
+            
+            return {
+                "items": transformed_pages,
+                "total": total,
+                "page": page,
+                "per_page": per_page
+            }
+        except Exception as e:
+            print(f"[pages] MongoDB query failed: {e}, falling back to in-memory")
+            # Fall through to in-memory fallback
 
     # Fallback: return entries from in-memory PAGES_META with folder info
     items = []
@@ -216,7 +528,7 @@ async def list_pages(q: Optional[str] = None, folder_id: Optional[str] = None, t
         # Apply filters
         if folder_id and meta.get("folder_id") != folder_id:
             continue
-        if q and q.lower() not in meta.get("title", "").lower():
+        if q and q.lower() not in meta.get("query", "").lower():
             continue
         if tags:
             page_tags = meta.get("tags", [])
@@ -230,15 +542,37 @@ async def list_pages(q: Optional[str] = None, folder_id: Optional[str] = None, t
         if folder_id_val and folder_id_val in FOLDERS:
             folder_name = FOLDERS[folder_id_val]["name"]
         
-        items.append(PageListItem(
-            id=pid,
-            title=meta.get("title", "Untitled"),
-            excerpt=meta.get("excerpt"),
-            tags=meta.get("tags", []),
-            folder_id=meta.get("folder_id"),
-            owner_id=meta.get("owner_id"),
-            updated_at=meta.get("updated_at")
-        ))
+        # Try to load full page data if available
+        try:
+            full_page = page_generator.load_page(pid)
+            items.append(PageListItem(
+                id=pid,
+                query=full_page.get("query", meta.get("query", "")),
+                template=full_page.get("template", meta.get("template", "topic_overview")),
+                status="complete",
+                sections=full_page.get("sections", []),
+                citations=full_page.get("citations", {}),
+                created_at=full_page.get("metadata", {}).get("created_at", meta.get("created_at", "")),
+                created_by=full_page.get("metadata", {}).get("created_by", meta.get("owner_id", "")),
+                folder_id=meta.get("folder_id"),
+                tags=meta.get("tags", []),
+                updated_at=meta.get("updated_at")
+            ))
+        except Exception:
+            # Fallback if full page can't be loaded
+            items.append(PageListItem(
+                id=pid,
+                query=meta.get("query", ""),
+                template=meta.get("template", "topic_overview"),
+                status="complete",
+                sections=[],
+                citations={},
+                created_at=meta.get("created_at", ""),
+                created_by=meta.get("owner_id", ""),
+                folder_id=meta.get("folder_id"),
+                tags=meta.get("tags", []),
+                updated_at=meta.get("updated_at")
+            ))
 
     start = (page - 1) * per_page
     sliced = items[start:start + per_page]
@@ -292,6 +626,18 @@ async def list_folders():
 # Now parameterized routes after all specific routes
 @router.get("/{page_id}")
 async def get_page(page_id: str):
+    """Get page by ID. Uses MongoDB when available."""
+    # Try MongoDB first
+    if pages_repo:
+        try:
+            page = pages_repo.get_page(page_id, include_deleted=False)
+            if page:
+                return page
+            # Page not found in MongoDB, try file-based fallback
+        except Exception as e:
+            print(f"[pages] MongoDB get_page failed: {e}, trying file-based")
+    
+    # Fallback to file-based storage
     try:
         page = page_generator.load_page(page_id)
         return page
@@ -634,7 +980,31 @@ async def update_page_metadata(page_id: str, req: UpdatePageMetadata):
 
 @router.delete("/{page_id}")
 async def delete_page(page_id: str, hard: Optional[bool] = False):
-    # Soft-delete behavior: mark tombstone in meta
+    """Delete page (soft delete by default). Uses MongoDB when available."""
+    # Use MongoDB if available
+    if pages_repo:
+        try:
+            success = pages_repo.delete_page(page_id, hard_delete=hard)
+            if success:
+                # Also delete from vector store
+                if vector_store:
+                    try:
+                        vector_store.delete_page_sections(page_id)
+                    except Exception as e:
+                        print(f"[pages] Failed to delete vectors for {page_id}: {e}")
+                
+                if hard:
+                    return {"status": "deleted_permanently", "id": page_id}
+                else:
+                    return {"status": "soft_deleted", "id": page_id}
+            else:
+                # Page not found, but allow idempotent deletes
+                return {"status": "deleted", "id": page_id}
+        except Exception as e:
+            print(f"[pages] MongoDB delete failed: {e}, using in-memory")
+            # Fall through to in-memory fallback
+    
+    # Fallback: in-memory soft-delete
     meta = PAGES_META.get(page_id)
     if not meta:
         # allow idempotent deletes
@@ -883,6 +1253,26 @@ async def get_action_status(job_id: str):
     return job
 
 
+class ExportRequest(BaseModel):
+    format: str = "html"  # pdf, html, markdown, docx
+    options: Optional[Dict[str, Any]] = None
+
+
+@router.post("/{page_id}/export", status_code=200)
+async def export_page(page_id: str, req: ExportRequest):
+    """Export a page to PDF, HTML, Markdown, or DOCX."""
+    try:
+        page_generator.load_page(page_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="page not found")
+
+    from content.export import export_page_to_format
+    result = export_page_to_format(page_id, req.format, req.options)
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Export failed"))
+    return result
+
+
 # Week 3: Interactive blocks and section-level refresh endpoints
 
 @router.post("/{page_id}/sections/{section_id}/refresh", status_code=202)
@@ -1066,9 +1456,9 @@ async def _refresh_section_job(job_id: str, page_id: str, section_id: str, req: 
         if req.instruction:
             enhanced_query += f" {req.instruction}"
         
-        # Get fresh Oracle data
+        # Get fresh Oracle data (use async version since we're already in async context)
         from content import oracle_client
-        oracle_resp = oracle_client.search_oracle(enhanced_query, k=5)
+        oracle_resp = await oracle_client.async_search_oracle(enhanced_query, k=5)
         resources = {"oracle_results": oracle_resp.get("results", [])}
         
         # Regenerate section based on type
