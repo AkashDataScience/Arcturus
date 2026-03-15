@@ -5,13 +5,14 @@ from typing import Any, Dict
 
 from core.event_bus import event_bus
 from core.scheduler import scheduler_service
-from shared.state import active_loops
+from shared.state import PROJECT_ROOT, active_loops
+
 
 # We need to import AgentLoop4 to re-hydrate, but circular imports might be tricky.
 # We'll use lazy imports or assume we just save metadata for now.
 
 logger = logging.getLogger("persistence")
-SNAPSHOT_FILE = Path("data/system/snapshot.json")
+SNAPSHOT_FILE = PROJECT_ROOT / "data" / "system" / "snapshot.json"
 
 class PersistenceManager:
     """

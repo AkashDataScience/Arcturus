@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { ArcturusLogo } from '@/components/common/ArcturusLogo';
 import { useAppStore } from './store';
+import { FeatureFlagsProvider } from '@/hooks/useFeatureFlags';
 
 const API_BASE = 'http://127.0.0.1:8000';
 
@@ -74,7 +75,9 @@ function App() {
         {!isBackendReady ? (
           <SplashScreen />
         ) : (
-          <AppLayout />
+          <FeatureFlagsProvider>
+            <AppLayout />
+          </FeatureFlagsProvider>
         )}
       </TooltipProvider>
     </ThemeProvider>

@@ -14,6 +14,8 @@ from opentelemetry.trace import Status, StatusCode
 
 from ops.cost import ConfigurableCostCalculator, CostCalculator
 from ops.tracing import llm_span
+from ops.admin.feature_flags import flag_store
+from ops.cache.semantic_cache import llm_cache
 
 
 def backoff_retry(max_retries=5, base_delay=2.0, max_delay=32.0):
@@ -172,13 +174,18 @@ class ModelManager:
                     f"Please check config/models.yaml."
                 )
 
-    async def generate_text(self, prompt: str) -> str:
+    async def generate_text(self, prompt: str, cache_key: str | None = None) -> str:
         """
         Generate text via Gemini or Ollama API.
         WATCHTOWER: Span for each LLM API call (Gemini, Ollama).
-        - Span name: llm.generate
         - Attributes: model, provider, prompt_length, output_length, cost_usd, input_tokens, output_tokens
+        - cache_key: Optional invariant key for semantic cache when prompt varies by run_id etc.
         """
+        if flag_store.get("semantic_cache"):
+            cached = llm_cache.get(prompt, self.text_model_key, cache_key)
+            if cached is not None:
+                return cached
+
         with llm_span(self.text_model_key, self.model_type, len(prompt)) as span:
             try:
                 if self.model_type == "gemini":
@@ -193,10 +200,17 @@ class ModelManager:
                 span.set_attribute("output_preview", (result[:1000] if result else ""))
                 span.set_attribute("input_tokens", input_tokens)
                 span.set_attribute("output_tokens", output_tokens)
-                cost_result = self.cost_calculator.compute(
-                    input_tokens, output_tokens, self.text_model_key, self.model_type
-                )
-                span.set_attribute("cost_usd", cost_result.cost_usd)
+                if flag_store.get("cost_tracking"):
+                    cost_result = self.cost_calculator.compute(
+                        input_tokens, output_tokens, self.text_model_key, self.model_type
+                    )
+                    span.set_attribute("cost_usd", cost_result.cost_usd)
+                else:
+                    span.set_attribute("cost_usd", 0)
+
+                if flag_store.get("semantic_cache"):
+                    llm_cache.put(prompt, self.text_model_key, result, cache_key)
+
                 return result
             except Exception as e:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
@@ -224,10 +238,13 @@ class ModelManager:
                 span.set_attribute("output_preview", (result[:500] if result else ""))
                 span.set_attribute("input_tokens", input_tokens)
                 span.set_attribute("output_tokens", output_tokens)
-                cost_result = self.cost_calculator.compute(
-                    input_tokens, output_tokens, self.text_model_key, self.model_type
-                )
-                span.set_attribute("cost_usd", cost_result.cost_usd)
+                if flag_store.get("cost_tracking"):
+                    cost_result = self.cost_calculator.compute(
+                        input_tokens, output_tokens, self.text_model_key, self.model_type
+                    )
+                    span.set_attribute("cost_usd", cost_result.cost_usd)
+                else:
+                    span.set_attribute("cost_usd", 0)
                 return result
             except Exception as e:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
