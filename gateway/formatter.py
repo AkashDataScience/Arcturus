@@ -5,7 +5,6 @@ required by each channel (Telegram MarkdownV2, Slack mrkdwn,
 Discord markdown, WebChat HTML, or plain text fallback).
 """
 
-import html
 import re
 
 # Characters that must be escaped in Telegram MarkdownV2
@@ -150,43 +149,12 @@ class MessageFormatter:
         return text
 
     def _format_webchat(self, text: str) -> str:
-        """Convert Markdown to safe HTML for WebChat widget.
+        """Strip Markdown and return plain text for the WebChat widget.
 
-        Rules:
-        - ``**bold**`` → ``<b>bold</b>``
-        - ``_italic_`` → ``<i>italic</i>``
-        - `` `code` `` → ``<code>code</code>``
-        - Plain text HTML-encoded to prevent XSS.
-        - Newlines → ``<br>``
+        The React frontend renders text directly (not as HTML), so we
+        strip markup rather than converting to HTML tags.
         """
-        # HTML-encode the whole string first, then re-introduce markup tags.
-        # Strategy: process token by token.
-
-        # Extract code spans first to avoid HTML-encoding them wrongly
-        segments: list[tuple[str, bool]] = []  # (text, is_code)
-        last = 0
-        for m in re.finditer(r"`([^`]+)`", text):
-            if m.start() > last:
-                segments.append((text[last : m.start()], False))
-            segments.append((m.group(1), True))
-            last = m.end()
-        if last < len(text):
-            segments.append((text[last:], False))
-
-        result_parts = []
-        for segment, is_code in segments:
-            if is_code:
-                result_parts.append(f"<code>{html.escape(segment)}</code>")
-            else:
-                encoded = html.escape(segment)
-                # Apply bold and italic after HTML-encoding
-                encoded = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", encoded)
-                encoded = re.sub(r"_(.+?)_", r"<i>\1</i>", encoded)
-                result_parts.append(encoded)
-
-        result = "".join(result_parts)
-        result = result.replace("\n", "<br>")
-        return result
+        return self._format_plain(text)
 
     def _format_googlechat(self, text: str) -> str:
         """Convert Markdown to Google Chat message text.

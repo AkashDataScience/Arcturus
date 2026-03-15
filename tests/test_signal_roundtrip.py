@@ -77,12 +77,13 @@ def _signal_envelope(
     text: str = "Hey Arcturus",
     is_group: bool = False,
     group_id: str | None = None,
+    message_id: str = _MESSAGE_ID,
 ) -> MessageEnvelope:
     return MessageEnvelope.from_signal(
         phone_number=phone,
         sender_name="Alice",
         text=text,
-        message_id=_MESSAGE_ID,
+        message_id=message_id,
         is_group=is_group,
         group_id=group_id,
     )
@@ -234,7 +235,7 @@ def test_signal_session_affinity():
             adapter = _make_adapter()
             bus = _make_bus_with_signal(adapter)
             env1 = _signal_envelope(text="first")
-            env2 = _signal_envelope(text="second")
+            env2 = _signal_envelope(text="second", message_id=str(int(_MESSAGE_ID) + 1))
             r1 = await bus.roundtrip(env1)
             r2 = await bus.roundtrip(env2)
 

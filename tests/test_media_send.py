@@ -334,6 +334,8 @@ def test_matrix_send_attachment_document():
 
 
 def test_whatsapp_appends_attachment_urls():
+    import json as _json
+
     adapter = WhatsAppAdapter({"bridge_url": "http://localhost:3001"})
     mock_client = AsyncMock(spec=httpx.AsyncClient)
     mock_client.post.return_value = MagicMock(
@@ -345,7 +347,10 @@ def test_whatsapp_appends_attachment_urls():
     att = _make_attachment()
     asyncio.run(adapter.send_message("15551234567", "hello", attachments=[att]))
 
-    payload = mock_client.post.call_args[1]["json"]
+    # WhatsApp adapter sends compact JSON bytes via content= (not json=) for HMAC compat
+    call_kwargs = mock_client.post.call_args[1]
+    raw = call_kwargs.get("content") or call_kwargs.get("json")
+    payload = _json.loads(raw.decode("utf-8")) if isinstance(raw, bytes) else raw
     assert att.url in payload["text"]
     assert "hello" in payload["text"]
 

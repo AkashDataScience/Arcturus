@@ -189,8 +189,15 @@ def test_whatsapp_roundtrip_via_bus():
         assert result.channel == "whatsapp"
         # Bridge POST /send must have been called exactly once
         assert mock_post.call_count == 1
-        # Payload must have recipient_id + text
-        sent_json = mock_post.call_args.kwargs.get("json", {})
+        # WhatsApp adapter uses content= (bytes) for compact HMAC — decode and parse
+        import json as _json
+        raw = mock_post.call_args.kwargs.get("content") or mock_post.call_args.kwargs.get("json")
+        if isinstance(raw, bytes):
+            sent_json = _json.loads(raw.decode("utf-8"))
+        elif isinstance(raw, dict):
+            sent_json = raw
+        else:
+            sent_json = {}
         assert sent_json.get("recipient_id") == "15551234567"
         assert isinstance(sent_json.get("text"), str)
         assert len(sent_json["text"]) > 0

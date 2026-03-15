@@ -79,6 +79,7 @@ def _teams_envelope(
     team_id: str = _TEAM_ID,
     channel_id: str = _CHANNEL_ID,
     text: str = "Hey Arcturus",
+    message_id: str = _MESSAGE_ID,
 ) -> MessageEnvelope:
     return MessageEnvelope.from_teams(
         team_id=team_id,
@@ -86,7 +87,7 @@ def _teams_envelope(
         sender_id="29:user-aad-001",
         sender_name="Alice",
         text=text,
-        message_id=_MESSAGE_ID,
+        message_id=message_id,
         service_url="http://localhost:4040",
     )
 
@@ -243,7 +244,7 @@ def test_teams_session_affinity():
             bus = _make_bus_with_teams(adapter)
 
             env1 = _teams_envelope(text="first message")
-            env2 = _teams_envelope(text="second message")
+            env2 = _teams_envelope(text="second message", message_id="1-activity-00002")
             r1 = await bus.roundtrip(env1)
             r2 = await bus.roundtrip(env2)
 

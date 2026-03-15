@@ -78,13 +78,17 @@ def _make_bus_with_matrix(adapter: MatrixAdapter) -> MessageBus:
     )
 
 
-def _matrix_envelope(room_id: str = _ROOM_ID, text: str = "Hey Arcturus") -> MessageEnvelope:
+def _matrix_envelope(
+    room_id: str = _ROOM_ID,
+    text: str = "Hey Arcturus",
+    event_id: str = _EVENT_ID,
+) -> MessageEnvelope:
     return MessageEnvelope.from_matrix(
         room_id=room_id,
         sender_id=_SENDER_ID,
         sender_name="Alice",
         text=text,
-        event_id=_EVENT_ID,
+        event_id=event_id,
     )
 
 
@@ -216,7 +220,7 @@ def test_matrix_session_affinity():
             adapter = _make_adapter()
             bus = _make_bus_with_matrix(adapter)
             env1 = _matrix_envelope(text="first")
-            env2 = _matrix_envelope(text="second")
+            env2 = _matrix_envelope(text="second", event_id="$eventxyz:localhost")
             r1 = await bus.roundtrip(env1)
             r2 = await bus.roundtrip(env2)
 
