@@ -73,9 +73,17 @@ def init_tracing(mongodb_uri: str, jaeger_endpoint: str | None = None, service_n
     batch_opts = {"schedule_delay_millis": 2000}
     provider.add_span_processor(BatchSpanProcessor(MongoDBSpanExporter(mongodb_uri), **batch_opts))
     if jaeger_endpoint:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
-        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=jaeger_endpoint), **batch_opts))
+        try:
+            import urllib.request
+            # Quick connectivity check — don't add exporter if Jaeger isn't reachable
+            req = urllib.request.Request(jaeger_endpoint, method="HEAD")
+            urllib.request.urlopen(req, timeout=2)
+        except Exception:
+            print(f"⚠️ [Watchtower] Jaeger endpoint unreachable ({jaeger_endpoint}), skipping OTLP exporter")
+            jaeger_endpoint = None
+        if jaeger_endpoint:
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+            provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=jaeger_endpoint), **batch_opts))
     trace.set_tracer_provider(provider)
 
 

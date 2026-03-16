@@ -5,6 +5,7 @@ import json
 import yaml
 from pathlib import Path
 from google import genai
+from config.gemini_client import get_gemini_client
 from ops.tracing import llm_span
 from opentelemetry.trace import Status, StatusCode
 from google.genai.errors import ServerError
@@ -81,8 +82,7 @@ class ModelManager:
                     "model": self.text_model_key,
                     "api_key_env": "GEMINI_API_KEY"
                 }
-                api_key = os.getenv("GEMINI_API_KEY")
-                self.client = genai.Client(api_key=api_key)
+                self.client = get_gemini_client()
             elif provider == "ollama":
                 # Ollama: model_name is the Ollama model like "phi4" or "llama3:8b"
                 self.model_info = {
@@ -114,8 +114,7 @@ class ModelManager:
 
             # Initialize client based on model type
             if self.model_type == "gemini":
-                api_key = os.getenv("GEMINI_API_KEY")
-                self.client = genai.Client(api_key=api_key)
+                self.client = get_gemini_client()
             # Ollama doesn't need a persistent client
 
         self.cost_calculator = cost_calculator or ConfigurableCostCalculator()

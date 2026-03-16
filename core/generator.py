@@ -51,12 +51,12 @@ class AppGenerator:
 
         
         # Start AI
-        from google import genai
         from google.genai import types
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        
+        from config.gemini_client import get_gemini_client
+        client = get_gemini_client()
+
         model = model_override or self._get_model_config()
-        
+
         # Call Gemini
         google_search_tool = types.Tool(google_search=types.GoogleSearch())
         
@@ -90,12 +90,12 @@ class AppGenerator:
             generation_prompt = generation_prompt.replace("{{FRONTEND_SPEC}}", json.dumps(frontend_spec, indent=2))
             
         # Start AI
-        from google import genai
         from google.genai import types
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        
+        from config.gemini_client import get_gemini_client
+        client = get_gemini_client()
+
         model = model_override or self._get_model_config()
-        
+
         response = client.models.generate_content(
             model=model,
             contents=generation_prompt,

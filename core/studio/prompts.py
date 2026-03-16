@@ -10,6 +10,11 @@ def get_outline_prompt(artifact_type: ArtifactType, user_prompt: str, parameters
     type_guidance = _get_type_specific_outline_guidance(artifact_type)
     params_str = json.dumps(parameters, indent=2) if parameters else "{}"
 
+    # Include theme catalog for slides so LLM can recommend the best theme
+    theme_section = ""
+    if artifact_type == ArtifactType.slides:
+        theme_section = _get_theme_recommendation_guidance()
+
     return f"""You are a content architect specializing in creating structured outlines.
 
 The user wants to create a **{artifact_type.value}** artifact.
@@ -19,13 +24,14 @@ User's request: {user_prompt}
 Additional parameters: {params_str}
 
 {type_guidance}
+{theme_section}
 
 Your task: Generate a structured outline for this {artifact_type.value}.
 
 Return ONLY valid JSON in this exact format:
 {{
   "title": "The title for this artifact",
-  "items": [
+{_get_theme_field_schema(artifact_type)}  "items": [
     {{
       "id": "1",
       "title": "Section/slide/tab title",
@@ -47,6 +53,31 @@ Rules:
 - Use hierarchical ids (1, 1.1, 1.2, 2, 2.1, etc.)
 - Include children for sub-items where appropriate
 - Return ONLY the JSON object, no markdown fences or explanations"""
+
+
+def _get_theme_recommendation_guidance() -> str:
+    """Return theme recommendation guidance for the LLM prompt."""
+    from core.studio.slides.themes import get_theme_catalog_for_prompt
+    catalog = get_theme_catalog_for_prompt()
+    return f"""
+THEME SELECTION (mandatory for slides):
+Choose the most appropriate visual theme based on the user's topic, tone, and audience.
+Analyze the user's prompt for style cues: "dark", "tech", "investor", "creative", "minimal",
+"medical", "legal", "startup", "nature", etc. Match these to the best theme below.
+
+Available themes:
+{catalog}
+
+Include your recommended theme ID in the "recommended_theme_id" field of the response JSON.
+If the user explicitly mentions a style preference (e.g., "dark theme", "minimal", "investor deck"),
+prioritize themes matching that preference. Otherwise, choose based on the topic domain."""
+
+
+def _get_theme_field_schema(artifact_type: ArtifactType) -> str:
+    """Return the recommended_theme_id field for the JSON schema if slides."""
+    if artifact_type == ArtifactType.slides:
+        return '  "recommended_theme_id": "theme-id-from-catalog",\n'
+    return ""
 
 
 def get_draft_prompt(artifact_type: ArtifactType, outline: Outline) -> str:

@@ -81,9 +81,21 @@ class ForgeOrchestrator:
         )
 
         # Slides-specific outline normalization
+        recommended_theme_id = None
         if artifact_type == ArtifactType.slides:
             from core.studio.slides.generator import normalize_slide_outline
             outline = normalize_slide_outline(outline, parameters, prompt)
+
+            # Extract LLM-recommended theme
+            raw_theme_id = parsed.get("recommended_theme_id")
+            if raw_theme_id and isinstance(raw_theme_id, str):
+                from core.studio.slides.themes import get_theme_ids
+                valid_ids = set(get_theme_ids())
+                if raw_theme_id.strip() in valid_ids:
+                    recommended_theme_id = raw_theme_id.strip()
+                    logger.info("LLM recommended theme: %s", recommended_theme_id)
+                else:
+                    logger.info("LLM recommended unknown theme '%s', ignoring", raw_theme_id)
 
         # Document-specific outline normalization
         if artifact_type == ArtifactType.document:
@@ -103,15 +115,19 @@ class ForgeOrchestrator:
             creation_prompt=prompt.strip() or None,
             outline=outline,
             content_tree=None,
+            theme_id=recommended_theme_id,
         )
 
         self.storage.save_artifact(artifact)
 
-        return {
+        result = {
             "artifact_id": artifact_id,
             "outline": outline.model_dump(mode="json"),
             "status": "pending",
         }
+        if recommended_theme_id:
+            result["recommended_theme_id"] = recommended_theme_id
+        return result
 
     async def approve_and_generate_draft(
         self,

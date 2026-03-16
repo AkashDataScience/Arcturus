@@ -604,3 +604,30 @@ def get_theme_ids(include_variants: bool = False) -> list[str]:
             for seed in range(1, _VARIANTS_PER_BASE + 1):
                 ids.append(f"{tid}--v{seed:02d}")
     return ids
+
+
+def get_theme_catalog_for_prompt() -> str:
+    """Return a compact theme catalog string for LLM prompts.
+
+    Lists each base theme with id, name, description, and mood/style keywords
+    so the LLM can recommend the best theme for a given presentation topic.
+    """
+    lines = []
+    for theme in _THEMES.values():
+        mood = _THEME_FONT_GROUP.get(theme.id, "modern")
+        bg_type = "dark" if _is_dark_theme(theme) else "light"
+        lines.append(
+            f"  - {theme.id}: {theme.name} — {theme.description or 'No description'} "
+            f"[mood: {mood}, background: {bg_type}]"
+        )
+    return "\n".join(lines)
+
+
+def _is_dark_theme(theme: SlideTheme) -> bool:
+    """Check if a theme has a dark background."""
+    bg = theme.colors.background.lstrip("#")
+    if len(bg) == 6:
+        r, g, b = int(bg[0:2], 16), int(bg[2:4], 16), int(bg[4:6], 16)
+        luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        return luminance < 128
+    return False

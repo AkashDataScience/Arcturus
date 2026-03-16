@@ -24,6 +24,8 @@ API_KEY_REGISTRY = {
         "label": "Core AI",
         "keys": [
             {"env": "GEMINI_API_KEY", "label": "Gemini API Key", "type": "secret"},
+            {"env": "GOOGLE_CLOUD_PROJECT", "label": "Vertex AI Project ID", "type": "text"},
+            {"env": "VERTEX_AI_API_KEY", "label": "Vertex AI API Key", "type": "secret"},
         ],
     },
     "neo4j": {
@@ -209,6 +211,14 @@ async def update_settings(request: UpdateSettingsRequest):
         settings = reload_settings()
         deep_merge(settings, request.settings)
         save_settings()
+
+        # Reset Gemini client singleton if gemini settings changed
+        if "gemini" in request.settings:
+            try:
+                from config.gemini_client import reset_client
+                reset_client()
+            except Exception:
+                pass
         
         # Identify settings that require action
         warnings = []
@@ -340,13 +350,23 @@ async def pull_ollama_model(request: PullModelRequest):
 
 @router.get("/gemini/status")
 async def get_gemini_status():
-    """Check if Gemini API key is configured via environment variable"""
+    """Check if Gemini is configured (API key or Vertex AI)."""
     try:
+        from config.gemini_client import is_gemini_configured, _load_gemini_settings
+        cfg = _load_gemini_settings()
+        mode = cfg.get("mode", "api_key")
+
         api_key = os.environ.get("GEMINI_API_KEY", "")
+        vertex_project = cfg.get("vertex_ai", {}).get("project") or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
+        vertex_location = cfg.get("vertex_ai", {}).get("location", "us-central1")
+
         return {
             "status": "success",
-            "configured": bool(api_key),
-            "key_preview": f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else None
+            "mode": mode,
+            "configured": is_gemini_configured(),
+            "api_key_preview": f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else None,
+            "vertex_project": vertex_project or None,
+            "vertex_location": vertex_location,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -428,6 +448,15 @@ async def update_apikeys(request: UpdateApiKeysRequest):
 
     # Force reload dotenv to pick up changes
     load_dotenv(str(ENV_FILE), override=True)
+
+    # Reset Gemini client singleton if relevant keys changed
+    gemini_keys = {"GEMINI_API_KEY", "GOOGLE_CLOUD_PROJECT", "VERTEX_AI_API_KEY"}
+    if gemini_keys & set(updated):
+        try:
+            from config.gemini_client import reset_client
+            reset_client()
+        except Exception:
+            pass
 
     return {
         "status": "success",
