@@ -1646,9 +1646,9 @@ class KnowledgeGraph:
         params["user_id"] = user_id or ""
 
         if user_id:
-            memory_match = "OPTIONAL MATCH (u:User {user_id: $user_id})-[:HAS_MEMORY]->(m:Memory)-[:CONTAINS_ENTITY]->(e)"
+            memory_match = "OPTIONAL MATCH (u:User {user_id: $user_id})-[:HAS_MEMORY]->(m:Memory)-[:CONTAINS_ENTITY]->(e) WHERE m.deleted IS NULL OR m.deleted = false"
         else:
-            memory_match = "OPTIONAL MATCH (m:Memory)-[:CONTAINS_ENTITY]->(e)"
+            memory_match = "OPTIONAL MATCH (m:Memory)-[:CONTAINS_ENTITY]->(e) WHERE m.deleted IS NULL OR m.deleted = false"
 
         space_filter = ""
         if space_ids:
@@ -1735,6 +1735,7 @@ class KnowledgeGraph:
         records = self._run_query(
             """
             MATCH (u:User {user_id: $user_id})-[:HAS_MEMORY]->(m:Memory)-[:CONTAINS_ENTITY]->(e:Entity)
+            WHERE m.deleted IS NULL OR m.deleted = false
             RETURN DISTINCT e.id AS id, e.type AS type, e.name AS name
             """,
             {"user_id": user_id},
@@ -1990,6 +1991,7 @@ class KnowledgeGraph:
                 OPTIONAL MATCH (m)-[:IN_SPACE]->(sp:Space)
                 WHERE (ANY(n IN $names_lower WHERE toLower(e.name) = n OR toLower(e.name) CONTAINS n))
                   AND (sp IS NULL OR sp.space_id IN $space_ids)
+                  AND (m.deleted IS NULL OR m.deleted = false)
                 RETURN DISTINCT m.id AS memory_id
                 """,
                 {"user_id": user_id, "names_lower": names_lower, "space_ids": space_ids},
@@ -1998,7 +2000,8 @@ class KnowledgeGraph:
             records = self._run_query(
                 """
                 MATCH (u:User {user_id: $user_id})-[:HAS_MEMORY]->(m:Memory)-[:CONTAINS_ENTITY]->(e:Entity)
-                WHERE ANY(n IN $names_lower WHERE toLower(e.name) = n OR toLower(e.name) CONTAINS n)
+                WHERE (ANY(n IN $names_lower WHERE toLower(e.name) = n OR toLower(e.name) CONTAINS n))
+                  AND (m.deleted IS NULL OR m.deleted = false)
                 RETURN DISTINCT m.id AS memory_id
                 """,
                 {"user_id": user_id, "names_lower": names_lower},
@@ -2034,6 +2037,7 @@ class KnowledgeGraph:
 
         entity_query = f"""
             MATCH (u:User {{user_id: $user_id}})-[:HAS_MEMORY]->(m:Memory)
+            WHERE m.deleted IS NULL OR m.deleted = false
             {space_filter}
             MATCH (m)-[:CONTAINS_ENTITY]->(e:Entity)
             WITH DISTINCT e
@@ -2097,6 +2101,7 @@ class KnowledgeGraph:
             mem_space_filter = "\n            MATCH (m)-[:IN_SPACE]->(sp:Space {space_id: $space_id})"
         mem_query = f"""
             MATCH (u:User {{user_id: $user_id}})-[:HAS_MEMORY]->(m:Memory)-[:CONTAINS_ENTITY]->(e:Entity)
+            WHERE m.deleted IS NULL OR m.deleted = false
             {mem_space_filter}
             WITH m, e
             ORDER BY m.created_at DESC
@@ -2127,6 +2132,7 @@ class KnowledgeGraph:
             me_query = f"""
                 MATCH (m:Memory)-[:CONTAINS_ENTITY]->(e:Entity)
                 WHERE m.id IN [{mem_ph}] AND e.id IN $eids
+                  AND (m.deleted IS NULL OR m.deleted = false)
                 RETURN m.id AS source, e.id AS target
                 """
             for r in self._run_query(me_query, params4):

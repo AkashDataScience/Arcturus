@@ -390,14 +390,14 @@ class QdrantVectorStore:
                 search_filter = Filter(must=conditions)
             
         if not include_deleted:
-            deleted_filter = FieldCondition(key="deleted", match=MatchValue(value=False))
+            deleted_filter = FieldCondition(key="deleted", match=MatchValue(value=True))
             if search_filter:
-                if search_filter.must:
-                    search_filter.must.append(deleted_filter)
+                if search_filter.must_not:
+                    search_filter.must_not.append(deleted_filter)
                 else:
-                    search_filter.must = [deleted_filter]
+                    search_filter.must_not = [deleted_filter]
             else:
-                search_filter = Filter(must=[deleted_filter])
+                search_filter = Filter(must_not=[deleted_filter])
 
         distance_threshold = 1.0 - score_threshold if score_threshold is not None else None
 
@@ -688,6 +688,7 @@ class QdrantVectorStore:
             search_filter = None
             if merged_filter:
                 must_conditions: List[Any] = []
+                must_not_conditions: List[Any] = []
                 for key, value in merged_filter.items():
                     # Global space: include points with space_id=="__global__" OR missing/empty space_id (legacy).
                     if key == "space_id" and value == SPACE_ID_GLOBAL:
@@ -703,12 +704,12 @@ class QdrantVectorStore:
                         must_conditions.append(FieldCondition(key=key, match=MatchValue(value=value)))
                 
                 if not include_deleted:
-                    must_conditions.append(FieldCondition(key="deleted", match=MatchValue(value=False)))
+                    must_not_conditions.append(FieldCondition(key="deleted", match=MatchValue(value=True)))
                 
-                if must_conditions:
-                    search_filter = Filter(must=must_conditions)
+                if must_conditions or must_not_conditions:
+                    search_filter = Filter(must=must_conditions, must_not=must_not_conditions)
             elif not include_deleted:
-                search_filter = Filter(must=[FieldCondition(key="deleted", match=MatchValue(value=False))])
+                search_filter = Filter(must_not=[FieldCondition(key="deleted", match=MatchValue(value=True))])
             results = []
             offset = None
             while True:

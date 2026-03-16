@@ -236,9 +236,10 @@ class EpisodicQdrantStore:
             conditions.append(FieldCondition(key=self._tenant_keyword_field, match=MatchValue(value=user_id)))
         if space_id is not None:
             conditions.append(FieldCondition(key="space_id", match=MatchValue(value=space_id)))
+        must_not = []
         if not include_deleted:
-            conditions.append(FieldCondition(key="deleted", match=MatchValue(value=False)))
-        search_filter = Filter(must=conditions) if conditions else None
+            must_not.append(FieldCondition(key="deleted", match=MatchValue(value=True)))
+        search_filter = Filter(must=conditions, must_not=must_not) if (conditions or must_not) else None
         vec = query_vector.tolist() if isinstance(query_vector, np.ndarray) else list(query_vector)
         try:
             kwargs = dict(
@@ -281,9 +282,10 @@ class EpisodicQdrantStore:
             conditions.append(FieldCondition(key=self._tenant_keyword_field, match=MatchValue(value=user_id)))
         if space_id is not None:
             conditions.append(FieldCondition(key="space_id", match=MatchValue(value=space_id)))
+        must_not = []
         if not include_deleted:
-            conditions.append(FieldCondition(key="deleted", match=MatchValue(value=False)))
-        scroll_filter = Filter(must=conditions) if conditions else None
+            must_not.append(FieldCondition(key="deleted", match=MatchValue(value=True)))
+        scroll_filter = Filter(must=conditions, must_not=must_not) if (conditions or must_not) else None
         try:
             points, _ = self.client.scroll(
                 collection_name=self.collection_name,
@@ -318,9 +320,10 @@ class EpisodicQdrantStore:
         conditions = []
         if self._is_tenant and user_id:
             conditions.append(FieldCondition(key=self._tenant_keyword_field, match=MatchValue(value=user_id)))
+        must_not = []
         if not include_deleted:
-            conditions.append(FieldCondition(key="deleted", match=MatchValue(value=False)))
-        scroll_filter = Filter(must=conditions) if conditions else None
+            must_not.append(FieldCondition(key="deleted", match=MatchValue(value=True)))
+        scroll_filter = Filter(must=conditions, must_not=must_not) if (conditions or must_not) else None
         try:
             out = []
             offset = None
