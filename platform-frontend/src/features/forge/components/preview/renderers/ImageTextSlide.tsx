@@ -1,4 +1,5 @@
 import type { SlideTheme } from './SlideFrame';
+import { resolveSlideColors } from './theme-utils';
 import type { Slide } from '../normalizers';
 import { findElement } from '../normalizers';
 import { BodyElement, AnimatedElement } from './elements';
@@ -36,6 +37,7 @@ function parseImageContent(content: unknown): { url: string | null; alt: string 
 }
 
 export function ImageTextSlide({ slide, theme, isThumb, imageBaseUrl, availableImageIds }: Props) {
+  const sc = resolveSlideColors(slide.metadata?.slide_style, theme);
   const imageEl = findElement(slide, 'image');
   const bodyEl = findElement(slide, 'body');
 
@@ -55,8 +57,9 @@ export function ImageTextSlide({ slide, theme, isThumb, imageBaseUrl, availableI
             <div
               className={isThumb ? 'text-[5px] font-bold mb-0.5' : 'text-xl font-bold mb-3'}
               style={{
-                color: theme.colors.primary,
-                fontFamily: `"${theme.font_heading}", "Segoe UI", system-ui, sans-serif`,
+                color: sc.titleColor,
+                fontFamily: sc.titleFont,
+                ...sc.titleStyle,
               }}
             >
               {slide.title}
@@ -65,7 +68,7 @@ export function ImageTextSlide({ slide, theme, isThumb, imageBaseUrl, availableI
         )}
         {bodyEl?.content && typeof bodyEl.content === 'string' && (
           <AnimatedElement animation="rise" delay={160} isThumb={isThumb}>
-            <BodyElement content={bodyEl.content} theme={theme} isThumb={isThumb} />
+            <BodyElement content={bodyEl.content} theme={theme} isThumb={isThumb} bodyColor={sc.bodyColor} accentColor={sc.accentColor} />
           </AnimatedElement>
         )}
       </div>

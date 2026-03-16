@@ -1,4 +1,5 @@
 import type { SlideTheme } from './SlideFrame';
+import { resolveSlideColors } from './theme-utils';
 import type { Slide } from '../normalizers';
 import { findElement, normalizeCalloutBox } from '../normalizers';
 import { QuoteElement, AnimatedElement } from './elements';
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export function QuoteSlide({ slide, theme, isThumb }: Props) {
+  const sc = resolveSlideColors(slide.metadata?.slide_style, theme);
   const quoteEl = findElement(slide, 'quote');
   const bodyEl = findElement(slide, 'body');
 
@@ -22,7 +24,7 @@ export function QuoteSlide({ slide, theme, isThumb }: Props) {
   return (
     <div className="flex items-center justify-center h-full">
       <AnimatedElement animation="scale" delay={100} isThumb={isThumb}>
-        <QuoteElement quote={quoteText} attribution={attribution} theme={theme} isThumb={isThumb} />
+        <QuoteElement quote={quoteText} attribution={attribution} theme={theme} isThumb={isThumb} accentColor={sc.accentColor} />
       </AnimatedElement>
     </div>
   );

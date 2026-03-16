@@ -62,4 +62,4 @@ export const RENDERERS: Record<string, FC<RendererProps>> = {
 };
 
 export { SlideFrame } from './SlideFrame';
-export type { SlideTheme, SlideThemeColors } from './SlideFrame';
+export type { SlideTheme, SlideThemeColors, SlideStyle } from './SlideFrame';

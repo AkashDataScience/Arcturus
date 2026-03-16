@@ -1,5 +1,5 @@
 import type { SlideTheme } from './theme-utils';
-import { isDarkBackground } from './theme-utils';
+import { isDarkBackground, resolveSlideColors } from './theme-utils';
 import type { Slide } from '../normalizers';
 import { findElement, normalizeTitleMeta, normalizeStats } from '../normalizers';
 import { StatCalloutElement, AnimatedElement } from './elements';
@@ -13,10 +13,11 @@ interface Props {
 }
 
 export function TitleSlide({ slide, theme, slideIndex, totalSlides, isThumb }: Props) {
+  const sc = resolveSlideColors(slide.metadata?.slide_style, theme);
   const meta = normalizeTitleMeta(slide, slideIndex, totalSlides);
   const titleBg = theme.colors.title_background || theme.colors.primary;
   const dark = isDarkBackground(titleBg);
-  const titleColor = dark ? '#ffffff' : theme.colors.primary;
+  const titleColor = slide.metadata?.slide_style?.title?.color ? sc.titleColor : (dark ? '#ffffff' : theme.colors.primary);
   const subtitleColor = dark ? 'rgba(255,255,255,0.7)' : theme.colors.text_light;
 
   const subtitleEl = findElement(slide, 'subtitle');
@@ -30,7 +31,7 @@ export function TitleSlide({ slide, theme, slideIndex, totalSlides, isThumb }: P
         <AnimatedElement animation="fade" delay={0} isThumb={isThumb}>
           <div
             className="inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase mb-3"
-            style={{ backgroundColor: theme.colors.accent, color: '#ffffff' }}
+            style={{ backgroundColor: sc.accentColor, color: '#ffffff' }}
           >
             {meta.badge}
           </div>
@@ -44,8 +45,9 @@ export function TitleSlide({ slide, theme, slideIndex, totalSlides, isThumb }: P
             key={i}
             className={isThumb ? 'text-[7px] font-bold leading-tight' : 'text-3xl font-bold leading-tight'}
             style={{
-              color: i === 0 ? titleColor : theme.colors.accent,
-              fontFamily: `"${theme.font_heading}", "Segoe UI", system-ui, sans-serif`,
+              color: i === 0 ? titleColor : sc.accentColor,
+              fontFamily: sc.titleFont,
+              ...sc.titleStyle,
             }}
           >
             {line}
@@ -78,7 +80,7 @@ export function TitleSlide({ slide, theme, slideIndex, totalSlides, isThumb }: P
       {closingStats.length > 0 && (
         <AnimatedElement animation="count" delay={200} isThumb={isThumb}>
           <div className={isThumb ? 'mt-2' : 'mt-8'}>
-            <StatCalloutElement stats={closingStats} theme={theme} isThumb={isThumb} />
+            <StatCalloutElement stats={closingStats} theme={theme} isThumb={isThumb} accentColor={sc.accentColor} />
           </div>
         </AnimatedElement>
       )}

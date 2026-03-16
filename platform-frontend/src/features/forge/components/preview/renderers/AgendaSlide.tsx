@@ -2,7 +2,7 @@ import type { SlideTheme } from './SlideFrame';
 import type { Slide } from '../normalizers';
 import { findElement, normalizeAgendaItems } from '../normalizers';
 import { KickerElement, BodyElement, AnimatedElement } from './elements';
-import { cardStyles } from './theme-utils';
+import { resolveSlideColors, resolveCardStyle } from './theme-utils';
 
 interface Props {
   slide: Slide;
@@ -11,7 +11,8 @@ interface Props {
 }
 
 export function AgendaSlide({ slide, theme, isThumb }: Props) {
-  const cs = cardStyles(slide.metadata?.visual_style?.card_style, theme, !!isThumb);
+  const sc = resolveSlideColors(slide.metadata?.slide_style, theme);
+  const cs = resolveCardStyle(slide.metadata?.slide_style?.card, theme, !!isThumb);
   const kickerEl = findElement(slide, 'kicker');
   const bodyEl = findElement(slide, 'body');
   const bulletEl = findElement(slide, 'bullet_list');
@@ -25,7 +26,7 @@ export function AgendaSlide({ slide, theme, isThumb }: Props) {
     <div className={`flex flex-col h-full ${isThumb ? 'p-2' : 'p-[6%]'}`}>
       <AnimatedElement animation="fade" delay={0} isThumb={isThumb}>
         {kickerEl?.content && (
-          <KickerElement content={kickerEl.content} theme={theme} isThumb={isThumb} />
+          <KickerElement content={kickerEl.content} theme={theme} isThumb={isThumb} accentColor={sc.accentColor} />
         )}
       </AnimatedElement>
 
@@ -34,8 +35,9 @@ export function AgendaSlide({ slide, theme, isThumb }: Props) {
           <div
             className={isThumb ? 'text-[5px] font-bold mb-1' : 'text-xl font-bold mb-4'}
             style={{
-              color: theme.colors.primary,
-              fontFamily: `"${theme.font_heading}", "Segoe UI", system-ui, sans-serif`,
+              color: sc.titleColor,
+              fontFamily: sc.titleFont,
+              ...sc.titleStyle,
             }}
           >
             {slide.title}
@@ -46,7 +48,7 @@ export function AgendaSlide({ slide, theme, isThumb }: Props) {
       {bodyEl?.content && typeof bodyEl.content === 'string' && (
         <AnimatedElement animation="rise" delay={120} isThumb={isThumb}>
           <div className={isThumb ? 'mb-0.5' : 'mb-3'}>
-            <BodyElement content={bodyEl.content} theme={theme} isThumb={isThumb} />
+            <BodyElement content={bodyEl.content} theme={theme} isThumb={isThumb} bodyColor={sc.bodyColor} accentColor={sc.accentColor} />
           </div>
         </AnimatedElement>
       )}
@@ -67,13 +69,13 @@ export function AgendaSlide({ slide, theme, isThumb }: Props) {
                 ? 'w-2 h-2 rounded-full flex items-center justify-center text-[2.5px] font-bold text-white mb-0.5'
                 : 'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white mb-2'
               }
-              style={{ backgroundColor: theme.colors.accent }}
+              style={{ backgroundColor: sc.accentColor }}
             >
               {i + 1}
             </div>
             <div
               className={isThumb ? 'text-[3px] font-bold' : 'text-sm font-semibold'}
-              style={{ color: theme.colors.text }}
+              style={{ color: sc.bodyColor }}
             >
               {item.title}
             </div>

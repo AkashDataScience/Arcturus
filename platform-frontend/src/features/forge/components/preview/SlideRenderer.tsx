@@ -6,7 +6,7 @@
 
 import { RENDERERS, SlideFrame } from './renderers';
 import type { SlideTheme } from './renderers';
-import type { VisualStyle } from './renderers/SlideFrame';
+import type { SlideStyle } from './renderers/SlideFrame';
 import type { Slide } from './normalizers';
 
 interface SlideRendererProps {
@@ -26,7 +26,8 @@ const TITLE_BG_TYPES = new Set(['title', 'section_divider']);
 export function SlideRenderer({ slide, theme, slideIndex, totalSlides, isThumb = false, imageBaseUrl, availableImageIds }: SlideRendererProps) {
   const Renderer = RENDERERS[slide.slide_type] ?? RENDERERS.content;
   const useTitleBg = TITLE_BG_TYPES.has(slide.slide_type);
-  const visualStyle = (slide.metadata?.visual_style as VisualStyle | undefined) ?? undefined;
+  // Prefer new slide_style; fall back to old visual_style for backward compat
+  const slideStyle = (slide.metadata?.slide_style ?? slide.metadata?.visual_style) as SlideStyle | undefined;
 
   return (
     <SlideFrame
@@ -35,7 +36,7 @@ export function SlideRenderer({ slide, theme, slideIndex, totalSlides, isThumb =
       totalSlides={totalSlides}
       isThumb={isThumb}
       useTitleBg={useTitleBg}
-      visualStyle={visualStyle}
+      slideStyle={slideStyle}
     >
       <Renderer
         slide={slide}

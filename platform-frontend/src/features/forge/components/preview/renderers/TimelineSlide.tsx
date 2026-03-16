@@ -2,7 +2,7 @@ import type { SlideTheme } from './SlideFrame';
 import type { Slide } from '../normalizers';
 import { findElement, normalizeTimeline } from '../normalizers';
 import { KickerElement, BodyElement, TakeawayElement, AnimatedElement } from './elements';
-import { cardStyles } from './theme-utils';
+import { resolveSlideColors, resolveCardStyle } from './theme-utils';
 
 interface Props {
   slide: Slide;
@@ -11,7 +11,8 @@ interface Props {
 }
 
 export function TimelineSlide({ slide, theme, isThumb }: Props) {
-  const cs = cardStyles(slide.metadata?.visual_style?.card_style, theme, !!isThumb);
+  const sc = resolveSlideColors(slide.metadata?.slide_style, theme);
+  const cs = resolveCardStyle(slide.metadata?.slide_style?.card, theme, !!isThumb);
   const kickerEl = findElement(slide, 'kicker');
   const bodyEl = findElement(slide, 'body');
   const bulletEl = findElement(slide, 'bullet_list');
@@ -24,7 +25,7 @@ export function TimelineSlide({ slide, theme, isThumb }: Props) {
     <div className={`flex flex-col h-full ${isThumb ? 'p-2' : 'p-[6%]'}`}>
       <AnimatedElement animation="fade" delay={0} isThumb={isThumb}>
         {kickerEl?.content && (
-          <KickerElement content={kickerEl.content} theme={theme} isThumb={isThumb} />
+          <KickerElement content={kickerEl.content} theme={theme} isThumb={isThumb} accentColor={sc.accentColor} />
         )}
       </AnimatedElement>
 
@@ -33,8 +34,9 @@ export function TimelineSlide({ slide, theme, isThumb }: Props) {
           <div
             className={isThumb ? 'text-[5px] font-bold mb-1' : 'text-xl font-bold mb-4'}
             style={{
-              color: theme.colors.primary,
-              fontFamily: `"${theme.font_heading}", "Segoe UI", system-ui, sans-serif`,
+              color: sc.titleColor,
+              fontFamily: sc.titleFont,
+              ...sc.titleStyle,
             }}
           >
             {slide.title}
@@ -45,7 +47,7 @@ export function TimelineSlide({ slide, theme, isThumb }: Props) {
       {bodyEl?.content && typeof bodyEl.content === 'string' && (
         <AnimatedElement animation="rise" delay={120} isThumb={isThumb}>
           <div className={isThumb ? 'mb-0.5' : 'mb-3'}>
-            <BodyElement content={bodyEl.content} theme={theme} isThumb={isThumb} />
+            <BodyElement content={bodyEl.content} theme={theme} isThumb={isThumb} bodyColor={sc.bodyColor} accentColor={sc.accentColor} />
           </div>
         </AnimatedElement>
       )}
@@ -62,9 +64,9 @@ export function TimelineSlide({ slide, theme, isThumb }: Props) {
                 {/* Timeline dot + line */}
                 {!isThumb && (
                   <div className="flex flex-col items-center shrink-0 pt-1">
-                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: theme.colors.accent }} />
+                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: sc.accentColor }} />
                     {i < entries.length - 1 && (
-                      <div className="w-px flex-1 mt-1" style={{ backgroundColor: theme.colors.accent + '30' }} />
+                      <div className="w-px flex-1 mt-1" style={{ backgroundColor: sc.accentColor + '30' }} />
                     )}
                   </div>
                 )}
@@ -74,14 +76,14 @@ export function TimelineSlide({ slide, theme, isThumb }: Props) {
                     {entry.date && (
                       <span
                         className={isThumb ? 'font-bold' : 'text-xs font-bold shrink-0'}
-                        style={{ color: theme.colors.accent }}
+                        style={{ color: sc.accentColor }}
                       >
                         {entry.date}
                       </span>
                     )}
                     <span
                       className={isThumb ? 'font-bold' : 'text-sm font-semibold'}
-                      style={{ color: theme.colors.text }}
+                      style={{ color: sc.bodyColor }}
                     >
                       {entry.title}
                     </span>
@@ -96,7 +98,7 @@ export function TimelineSlide({ slide, theme, isThumb }: Props) {
                 {entry.tag && !isThumb && (
                   <span
                     className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold text-white"
-                    style={{ backgroundColor: theme.colors.accent }}
+                    style={{ backgroundColor: sc.accentColor }}
                   >
                     {entry.tag}
                   </span>
@@ -111,11 +113,11 @@ export function TimelineSlide({ slide, theme, isThumb }: Props) {
               <div key={i} className="flex items-start gap-2">
                 <div
                   className={isThumb ? 'w-[2px] h-[2px] rounded-full mt-[1px] shrink-0' : 'w-2 h-2 rounded-full mt-1.5 shrink-0'}
-                  style={{ backgroundColor: theme.colors.accent }}
+                  style={{ backgroundColor: sc.accentColor }}
                 />
                 <span
                   className={isThumb ? 'text-[3.5px]' : 'text-sm'}
-                  style={{ color: theme.colors.text }}
+                  style={{ color: sc.bodyColor }}
                 >
                   {entry.title}
                 </span>
@@ -126,7 +128,7 @@ export function TimelineSlide({ slide, theme, isThumb }: Props) {
       </div>
 
       {takeawayEl?.content && (
-        <TakeawayElement content={takeawayEl.content} theme={theme} isThumb={isThumb} />
+        <TakeawayElement content={takeawayEl.content} theme={theme} isThumb={isThumb} accentColor={sc.accentColor} />
       )}
     </div>
   );

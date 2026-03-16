@@ -49,12 +49,12 @@ export function AnimatedElement({ children, delay = 0, animation = 'fade', isThu
 
 // ── Kicker ──────────────────────────────────────────────────────────────────
 
-export function KickerElement({ content, theme, isThumb }: ElementProps & { content: string }) {
+export function KickerElement({ content, theme, isThumb, accentColor }: ElementProps & { content: string; accentColor?: string }) {
   if (!content) return null;
   return (
     <div
       className={isThumb ? 'text-[4px] uppercase tracking-wider font-bold' : 'text-[11px] uppercase tracking-wider font-bold mb-1'}
-      style={{ color: theme.colors.accent }}
+      style={{ color: accentColor ?? theme.colors.accent }}
     >
       {content}
     </div>
@@ -63,14 +63,15 @@ export function KickerElement({ content, theme, isThumb }: ElementProps & { cont
 
 // ── Takeaway ────────────────────────────────────────────────────────────────
 
-export function TakeawayElement({ content, theme, isThumb }: ElementProps & { content: string }) {
+export function TakeawayElement({ content, theme, isThumb, accentColor }: ElementProps & { content: string; accentColor?: string }) {
   if (!content) return null;
+  const ac = accentColor ?? theme.colors.accent;
   return (
     <div
       className={isThumb ? 'mt-auto px-1 py-0.5 text-[3px]' : 'mt-auto px-4 py-2 rounded-md text-xs'}
       style={{
-        backgroundColor: theme.colors.accent + '18',
-        color: theme.colors.accent,
+        backgroundColor: ac + '18',
+        color: ac,
         fontFamily: `"${theme.font_body}", "Segoe UI", system-ui, sans-serif`,
       }}
     >
@@ -81,7 +82,7 @@ export function TakeawayElement({ content, theme, isThumb }: ElementProps & { co
 
 // ── Bullet List ─────────────────────────────────────────────────────────────
 
-export function BulletListElement({ items, theme, isThumb }: ElementProps & { items: string[] }) {
+export function BulletListElement({ items, theme, isThumb, accentColor, bodyColor }: ElementProps & { items: string[]; accentColor?: string; bodyColor?: string }) {
   if (!items?.length) return null;
   return (
     <ul className={isThumb ? 'space-y-0 text-[3.5px] pl-2' : 'space-y-1.5 text-sm pl-1'}>
@@ -89,9 +90,9 @@ export function BulletListElement({ items, theme, isThumb }: ElementProps & { it
         <li key={i} className="flex items-start gap-1.5">
           <span
             className={isThumb ? 'mt-[1px] w-[2px] h-[2px] rounded-full shrink-0' : 'mt-[7px] w-1.5 h-1.5 rounded-full shrink-0'}
-            style={{ backgroundColor: theme.colors.accent }}
+            style={{ backgroundColor: accentColor ?? theme.colors.accent }}
           />
-          <span style={{ color: theme.colors.text }}>{item}</span>
+          <span style={{ color: bodyColor ?? theme.colors.text }}>{item}</span>
         </li>
       ))}
     </ul>
@@ -100,12 +101,12 @@ export function BulletListElement({ items, theme, isThumb }: ElementProps & { it
 
 // ── Body Text ───────────────────────────────────────────────────────────────
 
-export function BodyElement({ content, theme, isThumb }: ElementProps & { content: string }) {
+export function BodyElement({ content, theme, isThumb, bodyColor }: ElementProps & { content: string; bodyColor?: string; accentColor?: string }) {
   if (!content) return null;
   return (
     <div
       className={isThumb ? 'text-[3.5px] leading-tight' : 'text-sm leading-relaxed whitespace-pre-wrap'}
-      style={{ color: theme.colors.text }}
+      style={{ color: bodyColor ?? theme.colors.text }}
     >
       {content}
     </div>
@@ -118,7 +119,7 @@ interface StatCalloutProps extends ElementProps {
   stats: { value: string; label: string }[];
 }
 
-export function StatCalloutElement({ stats, theme, isThumb }: StatCalloutProps) {
+export function StatCalloutElement({ stats, theme, isThumb, accentColor }: StatCalloutProps & { accentColor?: string }) {
   if (!stats.length) return null;
   return (
     <div className={`flex items-center justify-center ${isThumb ? 'gap-2' : 'gap-8'}`}>
@@ -134,7 +135,7 @@ export function StatCalloutElement({ stats, theme, isThumb }: StatCalloutProps) 
             <div
               className={isThumb ? 'text-[6px] font-bold' : 'text-4xl font-bold'}
               style={{
-                color: theme.colors.accent,
+                color: accentColor ?? theme.colors.accent,
                 fontFamily: `"${theme.font_heading}", "Segoe UI", system-ui, sans-serif`,
               }}
             >
@@ -492,13 +493,14 @@ interface QuoteElementProps extends ElementProps {
   attribution?: string;
 }
 
-export function QuoteElement({ quote, attribution, theme, isThumb }: QuoteElementProps) {
+export function QuoteElement({ quote, attribution, theme, isThumb, accentColor }: QuoteElementProps & { accentColor?: string }) {
   if (!quote) return null;
+  const ac = accentColor ?? theme.colors.accent;
 
   if (isThumb) {
     return (
       <div className="text-center px-2">
-        <span className="text-[8px] font-bold" style={{ color: theme.colors.accent }}>&ldquo;</span>
+        <span className="text-[8px] font-bold" style={{ color: ac }}>&ldquo;</span>
         <span className="text-[3.5px] italic" style={{ color: theme.colors.text }}>{quote}</span>
       </div>
     );
@@ -506,7 +508,7 @@ export function QuoteElement({ quote, attribution, theme, isThumb }: QuoteElemen
 
   return (
     <div className="text-center px-8">
-      <div className="text-5xl font-bold leading-none mb-2" style={{ color: theme.colors.accent }}>
+      <div className="text-5xl font-bold leading-none mb-2" style={{ color: ac }}>
         &ldquo;
       </div>
       <div

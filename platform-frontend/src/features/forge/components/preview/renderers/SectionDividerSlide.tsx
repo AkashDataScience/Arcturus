@@ -1,5 +1,5 @@
 import type { SlideTheme } from './theme-utils';
-import { isDarkBackground } from './theme-utils';
+import { isDarkBackground, resolveSlideColors } from './theme-utils';
 import type { Slide } from '../normalizers';
 import { findElement } from '../normalizers';
 import { AnimatedElement } from './elements';
@@ -11,9 +11,10 @@ interface Props {
 }
 
 export function SectionDividerSlide({ slide, theme, isThumb }: Props) {
+  const sc = resolveSlideColors(slide.metadata?.slide_style, theme);
   const titleBg = theme.colors.title_background || theme.colors.primary;
   const dark = isDarkBackground(titleBg);
-  const titleColor = dark ? '#ffffff' : theme.colors.primary;
+  const titleColor = slide.metadata?.slide_style?.title?.color ? sc.titleColor : (dark ? '#ffffff' : theme.colors.primary);
   const subtitleColor = dark ? 'rgba(255,255,255,0.7)' : theme.colors.text_light;
   const subtitleEl = findElement(slide, 'subtitle');
 
@@ -24,7 +25,8 @@ export function SectionDividerSlide({ slide, theme, isThumb }: Props) {
           className={isThumb ? 'text-[6px] font-bold' : 'text-2xl font-bold'}
           style={{
             color: titleColor,
-            fontFamily: `"${theme.font_heading}", "Segoe UI", system-ui, sans-serif`,
+            fontFamily: sc.titleFont,
+            ...sc.titleStyle,
           }}
         >
           {slide.title}
