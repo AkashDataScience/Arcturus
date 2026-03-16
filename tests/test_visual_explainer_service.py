@@ -97,3 +97,9 @@ def test_architecture_sections_as_single_dict_normalized():
     assert "One" in html
     assert "D" in html
     assert "a" in html
+
+
+def test_raw_html_mode_is_rejected():
+    """Raw HTML passthrough is disabled to keep the canvas surface bounded and safe."""
+    with pytest.raises(ValueError, match="table\\|mermaid\\|architecture"):
+        generate_html("raw", "Unsafe", {"html": "<script>alert(1)</script>"})

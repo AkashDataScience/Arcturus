@@ -350,21 +350,6 @@ def _html_architecture(title: str, sections: list[dict], subtitle: str = "", flo
 </html>"""
 
 
-def _html_raw(html_fragment: str) -> str:
-    """Wrap a raw HTML fragment in a minimal document."""
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Visual</title>
-</head>
-<body>
-{html_fragment}
-</body>
-</html>"""
-
-
 def generate_html(
     diagram_type: str,
     title: str,
@@ -374,14 +359,13 @@ def generate_html(
     Produce a self-contained HTML string for the given type and content.
     Does not depend on the visual_explainer skill class.
 
-    diagram_type: "table" | "mermaid" | "architecture" | "raw"
+    diagram_type: "table" | "mermaid" | "architecture"
     title: page title
     content:
       - table: dict with "headers" (list) and "rows" (list of lists)
       - mermaid: str (mermaid diagram code)
       - architecture: dict with "sections" (list of {"title", "description?", "items?", "variant?", "label?"}),
         optional "subtitle", "flowLabels" (list of strings between sections)
-      - raw: str (HTML fragment; title ignored)
     """
     if diagram_type == "table":
         headers = content.get("headers", [])
@@ -403,10 +387,7 @@ def generate_html(
         if not isinstance(flow_labels, list):
             flow_labels = []
         return _html_architecture(title, sections, subtitle=subtitle, flow_labels=flow_labels)
-    if diagram_type == "raw":
-        fragment = content if isinstance(content, str) else content.get("html", "")
-        return _html_raw(fragment)
-    raise ValueError(f"Unknown diagram_type: {diagram_type!r}; use table|mermaid|architecture|raw")
+    raise ValueError(f"Unknown diagram_type: {diagram_type!r}; use table|mermaid|architecture")
 
 # Optional LLM path (add only if you want server-side generation from natural language).
 # For architecture diagrams, the agent can instead call the API with content shape:

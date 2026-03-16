@@ -8,7 +8,7 @@ router = APIRouter(prefix="/visual-explainer", tags=["visual-explainer"])
 
 
 class GenerateRequest(BaseModel):
-    type: str  # "architecture" | "table" | "mermaid" | "raw"
+    type: str  # "architecture" | "table" | "mermaid"
     title: str = ""
     content: Any = {}  # structure depends on type (see docstring below)
 
