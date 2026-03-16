@@ -112,13 +112,21 @@ interface OutlineEdit {
     description?: string;
 }
 
-/** Flatten outline items to get a global index for each item (for slide mapping). */
+/** Flatten outline items to get a global index for slide mapping.
+ *  Only LEAF items (no children) map to actual slides.
+ *  Parent items with children are section headers — they don't get slides.
+ */
 function flattenOutlineIds(items: any[]): string[] {
     const flat: string[] = [];
     const walk = (list: any[]) => {
         for (const item of list) {
-            flat.push(item.id);
-            if (item.children?.length) walk(item.children);
+            if (item.children?.length) {
+                // Parent/section header — skip, recurse into children
+                walk(item.children);
+            } else {
+                // Leaf item — maps to an actual slide
+                flat.push(item.id);
+            }
         }
     };
     walk(items);
@@ -134,6 +142,7 @@ function EditableOutlineTree({
     theme,
     artifact,
     depth = 0,
+    rootFlatItems,
 }: {
     items: any[];
     edits: Record<string, OutlineEdit>;
@@ -143,9 +152,14 @@ function EditableOutlineTree({
     theme: SlideTheme;
     artifact: any;
     depth?: number;
+    /** Global flat leaf-item IDs — computed once at root, passed to all children. */
+    rootFlatItems?: string[];
 }) {
-    // Flatten must run before any early return (React hooks rules)
-    const flatItems = useMemo(() => flattenOutlineIds(items || []), [items]);
+    // Compute global flat list only at root level (depth 0), reuse for children
+    const flatItems = useMemo(
+        () => rootFlatItems ?? flattenOutlineIds(items || []),
+        [rootFlatItems, items],
+    );
 
     if (!items?.length) return <span className="text-muted-foreground text-xs italic">No outline items</span>;
 
@@ -181,6 +195,7 @@ function EditableOutlineTree({
                                     theme={theme}
                                     artifact={artifact}
                                     depth={depth + 1}
+                                    rootFlatItems={flatItems}
                                 />
                             </div>
                         )}
@@ -295,9 +310,32 @@ function OutlineItemWithSlide({
     }, [slide, slideIndex, directEdits, artifact, patchSlideContent, loadArtifact]);
 
     const displayTitle = editData?.title ?? item.title;
-    // Strip metadata suffixes like "slide_type: agenda" from description display
+    // Clean description: strip outline metadata (slide_type, headline_text, etc.)
     const rawDesc = editData?.description ?? item.description;
-    const displayDesc = rawDesc ? rawDesc.replace(/\.\s*slide_type:\s*\w+\s*$/i, '.').replace(/\s*slide_type:\s*\w+\s*$/i, '').trim() || rawDesc : rawDesc;
+    const displayDesc = useMemo(() => {
+        if (!rawDesc) return rawDesc;
+        // If description contains metadata fields, extract just the meaningful parts
+        if (/^slide_type:/m.test(rawDesc) || /\bheadline_text:/m.test(rawDesc)) {
+            const parts: string[] = [];
+            const supportingMatch = rawDesc.match(/supporting_text:\s*(.+?)(?:\n|$)/);
+            if (supportingMatch) parts.push(supportingMatch[1].trim());
+            const speakerMatch = rawDesc.match(/speaker_notes:\s*'([^']+)'/);
+            if (speakerMatch) parts.push(speakerMatch[1].trim());
+            if (parts.length > 0) return parts[0];
+            // Fallback: strip known metadata prefixes and return what's left
+            return rawDesc
+                .replace(/slide_type:\s*\w+\s*/gi, '')
+                .replace(/headline_text:\s*[^\n]+/gi, '')
+                .replace(/visual_description:\s*[^\n]+/gi, '')
+                .replace(/color_scheme:\s*[^\n]+/gi, '')
+                .replace(/suggested_svg_elements:\s*[^\n]+/gi, '')
+                .replace(/supporting_text:\s*/gi, '')
+                .replace(/speaker_notes:\s*'[^']*'/gi, '')
+                .trim() || rawDesc;
+        }
+        // Simple trailing slide_type strip
+        return rawDesc.replace(/\.\s*slide_type:\s*\w+\s*$/i, '.').replace(/\s*slide_type:\s*\w+\s*$/i, '').trim() || rawDesc;
+    }, [rawDesc]);
 
     // Text elements for direct editing
     const textElements = useMemo(() => {
@@ -312,7 +350,7 @@ function OutlineItemWithSlide({
             {/* Outline item header */}
             <div className="flex items-start gap-2">
                 <span className="text-xs text-muted-foreground/60 font-mono mt-0.5 shrink-0">
-                    {slideIndex + 1}.
+                    {slideIndex >= 0 ? `${slideIndex + 1}.` : ''}
                 </span>
                 <div className="flex-1 min-w-0">
                     {editable ? (

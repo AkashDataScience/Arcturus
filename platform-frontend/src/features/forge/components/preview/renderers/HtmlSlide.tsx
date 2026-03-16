@@ -68,10 +68,9 @@ function ensureSanitizeHook() {
       node.setAttribute('target', '_blank');
       node.setAttribute('rel', 'noopener noreferrer');
     }
-    // Add referrerPolicy to images
+    // Add referrerPolicy to images (no crossorigin — external servers often lack CORS headers)
     if (node.tagName === 'IMG') {
       node.setAttribute('referrerpolicy', 'no-referrer');
-      node.setAttribute('crossorigin', 'anonymous');
     }
   });
 }
