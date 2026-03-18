@@ -268,9 +268,9 @@ export const SchedulerDashboard: React.FC = () => {
                                                 )}
                                                 <span className={cn(
                                                     "text-[10px] font-bold uppercase",
-                                                    isLatest ? "text-neon-cyan" :
-                                                        isSuccess ? "text-green-400" :
-                                                            isPartial ? "text-amber-400" : "text-red-400"
+                                                    isLatest ? (isDark ? "text-neon-cyan" : "text-teal-600") :
+                                                        isSuccess ? "text-green-500" :
+                                                            isPartial ? "text-amber-500" : "text-red-500"
                                                 )}>
                                                     {isLatest ? 'LATEST RESULT' : isPartial ? 'PARTIAL FAILURE' : entry.status}
                                                 </span>

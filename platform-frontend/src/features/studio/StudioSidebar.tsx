@@ -61,7 +61,7 @@ export function StudioSidebar() {
             </div>
 
             {/* List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-hide">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
                 {filtered.length === 0 && (
                     <div className="text-center text-muted-foreground text-xs py-8 opacity-60">
                         No artifacts yet. Click + to create one.
@@ -78,7 +78,7 @@ export function StudioSidebar() {
                             key={a.id}
                             onClick={() => setActiveId(a.id)}
                             className={cn(
-                                "group relative p-3 rounded-xl border transition-all duration-300 cursor-pointer",
+                                "group relative p-4 rounded-xl border transition-all duration-300 cursor-pointer",
                                 "hover:shadow-md",
                                 isActive
                                     ? "border-primary/40 hover:border-primary/60 bg-primary/5"
