@@ -1,35 +1,51 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, Suspense } from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
-import { WorkspacePanel } from '../workspace/WorkspacePanel';
-import { GraphCanvas } from '../graph/GraphCanvas';
-import { FlowWorkspace } from '../workspace/FlowWorkspace';
-import { RunTimeline } from '@/features/replay/RunTimeline';
-import { DocumentViewer } from '../rag/DocumentViewer';
-import { DocumentAssistant } from '../rag/DocumentAssistant';
-import { NotesEditor } from '../notes/NotesEditor';
 import { useAppStore } from '@/store';
 import { cn } from '@/lib/utils';
-import { InboxPanel } from '../inbox/InboxPanel';
-import CanvasHost from '@/features/canvas/CanvasHost';
 import useVoice from '@/hooks/useVoice';
-
-import { AppGrid } from '@/features/apps/components/AppGrid';
-import { AppInspector } from '@/features/apps/components/AppInspector';
-import { SettingsPage } from '../settings/SettingsPage';
-import { RemMeProfileView } from '../remme/RemmeProfileView';
-import { KnowledgeGraphExplorer } from '../graph/KnowledgeGraphExplorer';
-import { ElectronBrowserView } from '@/features/news/components/ElectronBrowserView';
-import { NewsInspector } from '@/features/news/components/NewsInspector';
-import { IdeLayout } from '@/features/ide/components/IdeLayout';
-import { SchedulerDashboard } from '@/features/scheduler/components/SchedulerDashboard';
-import { MissionControl } from '@/features/console/components/MissionControl';
-import { SkillsDashboard } from '@/features/skills/components/SkillsDashboard';
-import { ForgeDashboard } from '@/features/forge/components/ForgeDashboard';
-import { AdminDashboard } from '@/features/admin/AdminDashboard';
-import { SwarmGraphView } from '@/features/swarm/SwarmGraphView';
-import { AgentPeekPanel } from '@/features/swarm/AgentPeekPanel';
 import { useSwarmStore } from '@/features/swarm/useSwarmStore';
+import { Loader2 } from 'lucide-react';
+
+// ── Lazy-loaded feature components (code-split per tab) ──────────────────────
+// These are heavy components that import Monaco, PDF viewer, graphs, etc.
+// Loading them lazily cuts initial bundle parse time dramatically.
+const lazy = (fn: () => Promise<any>, name: string) =>
+    React.lazy(() => fn().then(m => ({ default: m[name] || m.default })));
+
+const AppGrid = lazy(() => import('@/features/apps/components/AppGrid'), 'AppGrid');
+const AppInspector = lazy(() => import('@/features/apps/components/AppInspector'), 'AppInspector');
+const GraphCanvas = lazy(() => import('../graph/GraphCanvas'), 'GraphCanvas');
+const FlowWorkspace = lazy(() => import('../workspace/FlowWorkspace'), 'FlowWorkspace');
+const RunTimeline = lazy(() => import('@/features/replay/RunTimeline'), 'RunTimeline');
+const DocumentViewer = lazy(() => import('../rag/DocumentViewer'), 'DocumentViewer');
+const DocumentAssistant = lazy(() => import('../rag/DocumentAssistant'), 'DocumentAssistant');
+const NotesEditor = lazy(() => import('../notes/NotesEditor'), 'NotesEditor');
+const InboxPanel = lazy(() => import('../inbox/InboxPanel'), 'InboxPanel');
+const CanvasHost = React.lazy(() => import('@/features/canvas/CanvasHost'));
+const SettingsPage = lazy(() => import('../settings/SettingsPage'), 'SettingsPage');
+const RemMeProfileView = lazy(() => import('../remme/RemmeProfileView'), 'RemMeProfileView');
+const KnowledgeGraphExplorer = lazy(() => import('../graph/KnowledgeGraphExplorer'), 'KnowledgeGraphExplorer');
+const ElectronBrowserView = lazy(() => import('@/features/news/components/ElectronBrowserView'), 'ElectronBrowserView');
+const NewsInspector = lazy(() => import('@/features/news/components/NewsInspector'), 'NewsInspector');
+const IdeLayout = lazy(() => import('@/features/ide/components/IdeLayout'), 'IdeLayout');
+const SchedulerDashboard = lazy(() => import('@/features/scheduler/components/SchedulerDashboard'), 'SchedulerDashboard');
+const MissionControl = lazy(() => import('@/features/console/components/MissionControl'), 'MissionControl');
+const SkillsDashboard = lazy(() => import('@/features/skills/components/SkillsDashboard'), 'SkillsDashboard');
+const ForgeDashboard = lazy(() => import('@/features/forge/components/ForgeDashboard'), 'ForgeDashboard');
+const AdminDashboard = lazy(() => import('@/features/admin/AdminDashboard'), 'AdminDashboard');
+const SwarmGraphView = lazy(() => import('@/features/swarm/SwarmGraphView'), 'SwarmGraphView');
+const AgentPeekPanel = lazy(() => import('@/features/swarm/AgentPeekPanel'), 'AgentPeekPanel');
+const WorkspacePanel = lazy(() => import('../workspace/WorkspacePanel'), 'WorkspacePanel');
+const EchoGuide = lazy(() => import('@/features/echo/EchoGuide'), 'EchoGuide');
+
+// ── Loading fallback ─────────────────────────────────────────────────────────
+const TabLoader = () => (
+    <div className="flex-1 flex items-center justify-center h-full text-muted-foreground">
+        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+        <span className="text-sm">Loading...</span>
+    </div>
+);
 
 // ── Resize Handle ────────────────────────────────────────────────────────────
 
@@ -182,7 +198,9 @@ export const AppLayout: React.FC = () => {
 
             {/* Inbox Overlay */}
             {isInboxOpen && (
-                <InboxPanel onClose={() => setIsInboxOpen(false)} />
+                <Suspense fallback={<TabLoader />}>
+                    <InboxPanel onClose={() => setIsInboxOpen(false)} />
+                </Suspense>
             )}
 
             <div ref={containerRef} className="flex-1 flex overflow-hidden relative z-20 gap-0">
@@ -202,6 +220,7 @@ export const AppLayout: React.FC = () => {
 
                 {/* Center Content */}
                 <div className="flex-1 flex flex-col min-w-0 bg-background relative overflow-hidden">
+                  <Suspense fallback={<TabLoader />}>
                     {!isAppViewMode && (
                         <>
                             {/* Persistent App Grid */}
@@ -244,10 +263,7 @@ export const AppLayout: React.FC = () => {
                                     ) : sidebarTab === 'admin' ? (
                                         <AdminDashboard />
                                     ) : sidebarTab === 'echo' ? (
-                                        <>
-                                            <GraphCanvas />
-                                            <RunTimeline />
-                                        </>
+                                        <EchoGuide />
                                     ) : sidebarTab === 'canvas' ? (
                                         <CanvasHost surfaceId={activeSurfaceId} />
                                     ) : sidebarTab === 'swarm' ? (
@@ -271,6 +287,7 @@ export const AppLayout: React.FC = () => {
                             </div>
                         </div>
                     )}
+                  </Suspense>
                 </div>
 
                 {/* Right Inspector Panel — slides in */}
@@ -281,11 +298,13 @@ export const AppLayout: React.FC = () => {
                             className="h-full bg-card border-l border-border flex-shrink-0 flex flex-col overflow-hidden animate-panel-in-right"
                             style={{ width: rightWidth }}
                         >
-                            {sidebarTab === 'apps' ? <AppInspector /> :
-                                sidebarTab === 'news' ? <NewsInspector /> :
-                                    sidebarTab === 'swarm' ? <AgentPeekPanel /> :
-                                        (sidebarTab === 'rag' || sidebarTab === 'notes') ? <DocumentAssistant context={sidebarTab as 'rag' | 'notes'} /> :
-                                            <WorkspacePanel />}
+                            <Suspense fallback={<TabLoader />}>
+                                {sidebarTab === 'apps' ? <AppInspector /> :
+                                    sidebarTab === 'news' ? <NewsInspector /> :
+                                        sidebarTab === 'swarm' ? <AgentPeekPanel /> :
+                                            (sidebarTab === 'rag' || sidebarTab === 'notes') ? <DocumentAssistant context={sidebarTab as 'rag' | 'notes'} /> :
+                                                <WorkspacePanel />}
+                            </Suspense>
                         </div>
                     </>
                 )}

@@ -298,13 +298,17 @@ class MultiMCP:
             print(f"  ❌ [red]{name}[/red] CRITICAL FAILURE: {e}")
 
     async def start(self):
-        """Start all configured servers"""
+        """Start all configured servers (in parallel for speed)"""
+        import asyncio
         print("[bold green]🚀 Starting MCP Servers...[/bold green]")
+        tasks = []
         for name, config in self.server_configs.items():
             if config.get("enabled", True):
-                await self._start_server(name, config)
+                tasks.append(self._start_server(name, config))
             else:
                 print(f"  ⏭️ [dim]Skipping disabled server: {name}[/dim]")
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def stop(self):
         """Stop all servers"""

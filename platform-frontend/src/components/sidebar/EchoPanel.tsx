@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Mic, MicOff, Square, Bot, User, ShieldCheck, ShieldOff, Loader2, PlayCircle, Clock, CheckCircle2, XCircle, Zap, Volume2, Radio } from 'lucide-react';
+import { Mic, Square, Bot, User, ShieldCheck, Loader2, PlayCircle, Clock, CheckCircle2, XCircle, Zap, Volume2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store';
 import { startVoice, stopVoice } from '@/lib/voice';
@@ -127,6 +127,7 @@ export const EchoPanel: React.FC = () => {
             if (res.ok) {
                 setConversation([]);
                 setStatusText('Conversation ended and cleared.');
+                liveTranscriptRef.current = '';
                 setLiveTranscript('');
                 // Brief reassurance before returning to idle
                 setTimeout(() => setStatusText('Waiting for wake word...'), 2000);
@@ -167,13 +168,13 @@ export const EchoPanel: React.FC = () => {
     // ── Refs ─────────────────────────────────────────────────────────────────
     const nexusRunRef = useRef(false);
     nexusRunRef.current = nexusRunActive;
+    const liveTranscriptRef = useRef('');
     const bottomRef = useRef<HTMLDivElement>(null);
 
-    // Auto-scroll disabled for newest-at-top
+    // Auto-scroll to bottom when new messages arrive
     useEffect(() => {
-        // We want the view to stay at the top where the new content appears
-        // bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [conversation]);
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [conversation, liveTranscript]);
 
     // Fetch privacy + personas on mount
     useEffect(() => { fetchPrivacy(); fetchPersonas(); }, [fetchPrivacy, fetchPersonas]);
@@ -193,6 +194,7 @@ export const EchoPanel: React.FC = () => {
                     setIsListening(true);
                     setVoiceState('listening');
                     setStatusText('Listening...');
+                    liveTranscriptRef.current = '';
                     setLiveTranscript('');
                     setNexusRunActive(false);
                     if (sidebarTab !== 'echo') setSidebarTab('echo');
@@ -240,6 +242,7 @@ export const EchoPanel: React.FC = () => {
                 setIsListening(true);
                 setVoiceState('listening');
                 setStatusText(isBargeIn ? '⚡ Barge-in detected!' : 'Listening...');
+                liveTranscriptRef.current = '';
                 setLiveTranscript('');
                 setNexusRunActive(false);
 
@@ -248,8 +251,8 @@ export const EchoPanel: React.FC = () => {
                 useAppStore.getState().setCurrentRun(null);
 
                 if (isBargeIn) {
-                    // Drop previous dialogues on barge-in as requested
-                    setConversation([{
+                    // Append barge-in notice — preserve conversation history
+                    setConversation(c => [...c, {
                         id: `sys-barge-${Date.now()}`,
                         role: 'assistant',
                         text: '⚡ Barge-in detected',
@@ -260,7 +263,10 @@ export const EchoPanel: React.FC = () => {
 
                 if (sidebarTab !== 'echo') setSidebarTab('echo');
             } else if (ev.type === 'voice_stt') {
-                if (ev.data?.full_text) setLiveTranscript(ev.data.full_text);
+                if (ev.data?.full_text) {
+                    liveTranscriptRef.current = ev.data.full_text;
+                    setLiveTranscript(ev.data.full_text);
+                }
             } else if (ev.type === 'voice_nexus_run') {
                 const active = ev.data?.active === true;
                 setNexusRunActive(active);
@@ -268,17 +274,19 @@ export const EchoPanel: React.FC = () => {
                     setIsListening(true);
                     setVoiceState('thinking');
                     setStatusText('Processing with Nexus...');
-                    setLiveTranscript(prev => {
-                        if (prev.trim()) {
-                            setConversation(c => [...c, {
-                                id: `u-${Date.now()}`,
-                                role: 'user',
-                                text: prev.trim(),
-                                ts: Date.now(),
-                            }]);
-                        }
-                        return '';
-                    });
+                    // Capture value before clearing — ref is mutable and would
+                    // be empty by the time React runs the setConversation updater.
+                    const nexusTranscript = liveTranscriptRef.current.trim();
+                    liveTranscriptRef.current = '';
+                    setLiveTranscript('');
+                    if (nexusTranscript) {
+                        setConversation(c => [...c, {
+                            id: `u-${Date.now()}`,
+                            role: 'user',
+                            text: nexusTranscript,
+                            ts: Date.now(),
+                        }]);
+                    }
                 }
             } else if (ev.type === 'voice_tts') {
                 if (ev.data?.text?.trim()) {
@@ -301,15 +309,14 @@ export const EchoPanel: React.FC = () => {
                     setVoiceState('thinking');
                     setIsListening(true);
                     setStatusText(nexusRunRef.current ? 'Processing with Nexus...' : 'Thinking...');
-                    // Flush live transcript to conversation as user message
-                    setLiveTranscript(prev => {
-                        if (prev.trim()) {
-                            setConversation(c => [...c, {
-                                id: `u-${Date.now()}`, role: 'user', text: prev.trim(), ts: Date.now(),
-                            }]);
-                        }
-                        return '';
-                    });
+                    const thinkTranscript = liveTranscriptRef.current.trim();
+                    liveTranscriptRef.current = '';
+                    setLiveTranscript('');
+                    if (thinkTranscript) {
+                        setConversation(c => [...c, {
+                            id: `u-${Date.now()}`, role: 'user', text: thinkTranscript, ts: Date.now(),
+                        }]);
+                    }
                 } else if (s === 'SPEAKING') {
                     setVoiceState('speaking');
                     if (!nexusRunRef.current) { setIsListening(true); setStatusText('Speaking...'); }
@@ -317,14 +324,14 @@ export const EchoPanel: React.FC = () => {
                     setIsListening(true); setStatusText('Dictating — say "stop dictation" to finish.');
                 } else if (s === 'IDLE') {
                     setIsListening(false); setVoiceState('idle'); setStatusText('Ready'); setNexusRunActive(false);
-                    setLiveTranscript(prev => {
-                        if (prev.trim()) {
-                            setConversation(c => [...c, {
-                                id: `u-${Date.now()}`, role: 'user', text: prev.trim(), ts: Date.now(),
-                            }]);
-                        }
-                        return '';
-                    });
+                    const idleTranscript = liveTranscriptRef.current.trim();
+                    liveTranscriptRef.current = '';
+                    setLiveTranscript('');
+                    if (idleTranscript) {
+                        setConversation(c => [...c, {
+                            id: `u-${Date.now()}`, role: 'user', text: idleTranscript, ts: Date.now(),
+                        }]);
+                    }
                 }
             }
         }
@@ -358,8 +365,8 @@ export const EchoPanel: React.FC = () => {
         <div className="flex flex-col h-full w-full bg-background text-foreground overflow-hidden">
 
             {/* ── Header ──────────────────────────────────────────────── */}
-            <div className="p-3 border-b border-border/50 bg-muted/20 flex items-center justify-between shrink-0 gap-2">
-                <div className="min-w-0">
+            <div className="px-3 py-2.5 border-b border-border/50 bg-muted/20 shrink-0 space-y-1.5">
+                <div className="flex items-center justify-between">
                     <h2 className="text-base font-semibold text-primary/90 flex items-center gap-2 tracking-tight">
                         Echo
                         <span
@@ -367,122 +374,69 @@ export const EchoPanel: React.FC = () => {
                             className={`w-2 h-2 rounded-full shrink-0 ${isStreaming ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`}
                         />
                     </h2>
-                    <p className="text-xs text-muted-foreground mt-0.5 truncate">Talk to Arcturus hands-free</p>
+                    <span className="text-2xs text-muted-foreground/60">Talk to Arcturus hands-free</span>
                 </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                    {/* Privacy toggle */}
+                {/* Compact provider info + persona — single row */}
+                <div className="flex items-center gap-2">
                     <button
                         onClick={togglePrivacy}
                         disabled={privacyLoading || !privacy}
-                        title={
-                            !privacy
-                                ? 'Loading privacy state...'
-                                : isPrivate
-                                    ? 'Privacy Mode ON — click to switch to cloud (Deepgram + Azure)'
-                                    : 'Privacy Mode OFF — click to go fully local (Whisper + Piper)'
-                        }
+                        title={isPrivate ? 'Local mode — click for cloud' : 'Cloud mode — click for local'}
                         className={cn(
-                            'relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 border',
+                            'shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium transition-all border',
                             isPrivate
-                                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25'
-                                : 'bg-muted/50 border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted',
+                                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400/80 hover:bg-emerald-500/20'
+                                : 'bg-muted/30 border-border/30 text-muted-foreground hover:text-foreground',
                             (privacyLoading || !privacy) && 'opacity-50 cursor-not-allowed'
                         )}
                     >
-                        {privacyLoading ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : isPrivate ? (
-                            <ShieldCheck className="w-3.5 h-3.5" />
-                        ) : (
-                            <ShieldOff className="w-3.5 h-3.5" />
-                        )}
-                        {isPrivate ? 'Private' : 'Cloud'}
+                        {privacyLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <ShieldCheck className="w-2.5 h-2.5" />}
+                        {privacy?.stt_provider ?? 'stt'} · {privacy?.tts_provider ?? 'tts'}
                     </button>
 
-                    {/* Mic toggle (small header version) */}
-                    <button
-                        onClick={handleMicToggle}
-                        title={isListening ? 'Stop recording' : 'Start recording'}
-                        className={cn(
-                            'p-1.5 rounded-lg transition-all duration-200',
-                            isListening && voiceState === 'listening'
-                                ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 ring-1 ring-red-500/50'
-                                : 'bg-primary/10 hover:bg-primary/20 text-primary'
-                        )}
-                    >
-                        {isListening && voiceState === 'listening' ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                    </button>
+                    <div className="h-3 w-px bg-border/30" />
+
+                    {/* Persona selector — always enabled (Kokoro supports personas) */}
+                    {personasState && (
+                        <div className="relative flex-1 min-w-0">
+                            <select
+                                value={personasState.active}
+                                onChange={e => changePersona(e.target.value)}
+                                disabled={personaChanging}
+                                title={personasState.personas[personasState.active]?.description ?? ''}
+                                className={cn(
+                                    'w-full appearance-none bg-muted/30 border border-border/30 rounded',
+                                    'text-2xs text-foreground/80 px-2 pr-5 py-0.5',
+                                    'hover:border-primary/40 focus:outline-none focus:border-primary/50',
+                                    'transition-all duration-150',
+                                    personaChanging ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                                )}
+                            >
+                                {Object.keys(personasState.personas).map(key => (
+                                    <option key={key} value={key}>
+                                        {key.charAt(0).toUpperCase() + key.slice(1)}
+                                    </option>
+                                ))}
+                            </select>
+                            <div className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground/50">
+                                {personaChanging
+                                    ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                    : <svg className="w-2.5 h-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 4l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                }
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
-            {/* ── Privacy info strip ───────────────────────────────── */}
-            {isPrivate && (
-                <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-emerald-500/8 border-b border-emerald-500/20 text-emerald-400/80 text-xs font-medium">
-                    <ShieldCheck className="w-3 h-3 shrink-0" />
-                    <span>
-                        STT: {privacy?.stt_provider === 'whisper' ? 'Whisper (local)' : privacy?.stt_provider}
-                        {' · '}
-                        TTS: {privacy?.tts_provider === 'piper' ? 'Piper (local)' : privacy?.tts_provider}
-                    </span>
-                </div>
-            )}
-
-            {/* ── Persona selector ─────────────────────────────────── */}
-            {personasState && (
-                <div
-                    className={cn(
-                        'shrink-0 flex items-center gap-2 px-3 py-2 border-b border-border/30 bg-muted/10 transition-opacity duration-200',
-                        isPrivate && 'opacity-40 pointer-events-none'
-                    )}
-                    title={isPrivate ? 'Persona selection is unavailable in Privacy Mode (Piper TTS does not support Azure personas)' : ''}
-                >
-                    <span className="text-xs text-muted-foreground font-medium shrink-0 flex items-center gap-1">
-                        {isPrivate && (
-                            <svg className="w-2.5 h-2.5" viewBox="0 0 12 12" fill="currentColor">
-                                <path d="M9 5V4a3 3 0 1 0-6 0v1H2v7h8V5H9zm-4-1a1 1 0 1 1 2 0v1H5V4zm1 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z" />
-                            </svg>
-                        )}
-                        Voice
-                    </span>
-                    <div className="relative flex-1">
-                        <select
-                            value={personasState.active}
-                            onChange={e => changePersona(e.target.value)}
-                            disabled={personaChanging || isPrivate}
-                            title={personasState.personas[personasState.active]?.description ?? ''}
-                            className={cn(
-                                'w-full appearance-none bg-muted/40 border border-border/40 rounded-md',
-                                'text-xs text-foreground px-2.5 pr-7 py-1',
-                                'hover:border-primary/40 focus:outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/30',
-                                'transition-all duration-150',
-                                (personaChanging || isPrivate) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-                            )}
-                        >
-                            {Object.entries(personasState.personas).map(([key, cfg]) => (
-                                <option key={key} value={key} title={cfg.description}>
-                                    {key.charAt(0).toUpperCase() + key.slice(1)}
-                                </option>
-                            ))}
-                        </select>
-                        <div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">
-                            {personaChanging
-                                ? <Loader2 className="w-3 h-3 animate-spin" />
-                                : <svg className="w-3 h-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 4l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                            }
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {/* ── Mic button + status ──────────────────────────────── */}
-            <div className="shrink-0 flex flex-col items-center gap-3 pt-5 pb-4 px-4 border-b border-border/30">
-                {/* Large clickable mic button */}
+            <div className="shrink-0 flex flex-col items-center gap-2 pt-4 pb-3 px-4 border-b border-border/30">
                 <button
                     onClick={handleMicToggle}
                     disabled={voiceState === 'thinking' || voiceState === 'speaking'}
                     className={cn(
-                        'relative w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 cursor-pointer',
+                        'relative w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 cursor-pointer',
                         'focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary',
                         voiceState === 'listening'
                             ? 'bg-red-500/20 text-red-400 shadow-[0_0_40px_rgba(239,68,68,0.4)] scale-105'
@@ -494,7 +448,6 @@ export const EchoPanel: React.FC = () => {
                         (voiceState === 'thinking' || voiceState === 'speaking') && 'cursor-not-allowed'
                     )}
                 >
-                    {/* Pulsing ring when recording */}
                     {voiceState === 'listening' && (
                         <>
                             <span className="absolute inset-0 rounded-full border-2 border-red-400/60 animate-ping" />
@@ -508,19 +461,18 @@ export const EchoPanel: React.FC = () => {
                         <span className="absolute inset-0 rounded-full border-2 border-violet-400/40 animate-pulse" />
                     )}
 
-                    {/* Icon */}
                     {voiceState === 'listening' ? (
-                        <Square className="w-8 h-8 relative z-10" />
+                        <Square className="w-6 h-6 relative z-10" />
                     ) : voiceState === 'thinking' ? (
-                        <Loader2 className="w-8 h-8 relative z-10 animate-spin" />
+                        <Loader2 className="w-6 h-6 relative z-10 animate-spin" />
                     ) : voiceState === 'speaking' ? (
-                        <Volume2 className="w-8 h-8 relative z-10 animate-pulse" />
+                        <Volume2 className="w-6 h-6 relative z-10 animate-pulse" />
                     ) : (
-                        <Mic className="w-8 h-8 relative z-10" />
+                        <Mic className="w-6 h-6 relative z-10" />
                     )}
                 </button>
 
-                {/* Status text */}
+                {/* Status + hint on one line */}
                 <span className={cn(
                     'text-xs font-semibold tracking-wide text-center transition-colors duration-200',
                     voiceState === 'listening' ? 'text-red-400'
@@ -531,38 +483,13 @@ export const EchoPanel: React.FC = () => {
                     {statusText}
                 </span>
 
-                {/* Hint text */}
-                {voiceState === 'idle' && (
-                    <p className="text-xs text-muted-foreground/50 text-center">
-                        Tap to start recording
-                    </p>
-                )}
-                {voiceState === 'listening' && (
-                    <p className="text-xs text-red-400/60 text-center">
-                        Tap to stop &amp; send
-                    </p>
-                )}
-
                 {nexusRunActive && (
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-violet-500/15 border border-violet-500/30 text-violet-400 text-xs font-medium">
+                    <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-violet-500/15 border border-violet-500/30 text-violet-400 text-2xs font-medium">
                         <span className="relative flex h-1.5 w-1.5">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75" />
                             <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500" />
                         </span>
                         Nexus run in progress
-                    </div>
-                )}
-
-                {/* Audio visualizer bars */}
-                {voiceState === 'listening' && (
-                    <div className="flex items-end justify-center gap-[3px] h-5">
-                        {[...Array(10)].map((_, i) => (
-                            <div
-                                key={i}
-                                className="w-1 rounded-full animate-pulse bg-red-400/70"
-                                style={{ height: `${20 + (i % 3) * 30}%`, animationDelay: `${i * 0.1}s`, animationDuration: '0.8s' }}
-                            />
-                        ))}
                     </div>
                 )}
             </div>
@@ -650,20 +577,7 @@ export const EchoPanel: React.FC = () => {
                             </div>
                         )}
 
-                        {/* Live transcript bubble - Moved to top for "newest first" view */}
-                        {liveTranscript && (
-                            <div className="flex gap-2 items-start flex-row-reverse">
-                                <div className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5 bg-primary/20 text-primary">
-                                    <User className="w-3 h-3" />
-                                </div>
-                                <div className="max-w-[82%] rounded-2xl rounded-tr-sm px-3 py-2 text-xs leading-relaxed bg-primary/10 border border-primary/20 border-dashed text-foreground/80 italic">
-                                    {liveTranscript}
-                                    <span className="ml-1 inline-block w-0.5 h-3 bg-primary/60 animate-pulse rounded-full align-middle" />
-                                </div>
-                            </div>
-                        )}
-
-                        {[...conversation].reverse().map(entry => (
+                        {conversation.map(entry => (
                             <div
                                 key={entry.id}
                                 className={cn('flex gap-2 items-start', entry.role === 'user' ? 'flex-row-reverse' : 'flex-row')}
@@ -706,6 +620,19 @@ export const EchoPanel: React.FC = () => {
                                 )}
                             </div>
                         ))}
+
+                        {/* Live transcript bubble — at the bottom (latest) */}
+                        {liveTranscript && (
+                            <div className="flex gap-2 items-start flex-row-reverse">
+                                <div className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5 bg-primary/20 text-primary">
+                                    <User className="w-3 h-3" />
+                                </div>
+                                <div className="max-w-[82%] rounded-2xl rounded-tr-sm px-3 py-2 text-xs leading-relaxed bg-primary/10 border border-primary/20 border-dashed text-foreground/80 italic">
+                                    {liveTranscript}
+                                    <span className="ml-1 inline-block w-0.5 h-3 bg-primary/60 animate-pulse rounded-full align-middle" />
+                                </div>
+                            </div>
+                        )}
 
                         <div ref={bottomRef} />
                     </div>

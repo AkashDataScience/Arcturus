@@ -402,12 +402,14 @@ export const RagPanel: React.FC = () => {
         };
 
         scan(files);
+        // Treat as "all done" if ≤1% of files are unindexed (e.g. 1 out of 1429)
+        const negligible = total > 0 && unindexed <= Math.max(1, Math.floor(total * 0.01)) && pending === 0;
         return {
             unindexed,
             pending,
             errors,
             total,
-            allDone: total > 0 && unindexed === 0 && pending === 0,
+            allDone: total > 0 && (unindexed === 0 || negligible) && pending === 0,
             empty: total === 0
         };
     }, [files]);
@@ -462,17 +464,6 @@ export const RagPanel: React.FC = () => {
                                 </DropdownMenuItem>
                             </DropdownMenuContent>
                         </DropdownMenu>
-
-                        <div className="w-px h-4 bg-border/50 mx-1" />
-
-                        <button
-                            onClick={() => setIsSpacesModalOpen(true)}
-                            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 shrink-0"
-                            title="Select Space"
-                        >
-                            <FolderOpen className="w-3 h-3" />
-                            Space: {currentSpaceId ? (spaces.find(s => s.space_id === currentSpaceId)?.name || 'Space') : 'Global'}
-                        </button>
 
                         {/* Mode Toggles */}
                         <Tooltip>

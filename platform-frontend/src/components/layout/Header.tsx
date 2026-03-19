@@ -83,7 +83,7 @@ export const Header: React.FC = () => {
         }
     };
 
-    useEffect(() => { fetchPrivacy(); }, [fetchPrivacy]);
+    useEffect(() => { const t = setTimeout(fetchPrivacy, 2000); return () => clearTimeout(t); }, [fetchPrivacy]);
 
     // ── Persona Selection ────────────────────────────────────────────────────
     const [personas, setPersonas] = useState<Record<string, { voice_name: string; rate: string; pitch: string; volume: string; description: string }> | null>(null);
@@ -120,9 +120,9 @@ export const Header: React.FC = () => {
         }
     };
 
-    useEffect(() => { fetchPersonas(); }, [fetchPersonas]);
+    useEffect(() => { const t = setTimeout(fetchPersonas, 2000); return () => clearTimeout(t); }, [fetchPersonas]);
 
-    // Ollama status check
+    // Ollama status check (deferred — not critical for initial render)
     useEffect(() => {
         const checkOllama = async () => {
             try {
@@ -135,9 +135,9 @@ export const Header: React.FC = () => {
                 setOllamaStatus('offline');
             }
         };
-        checkOllama();
+        const t = setTimeout(checkOllama, 3000);
         const interval = setInterval(checkOllama, 30000);
-        return () => clearInterval(interval);
+        return () => { clearTimeout(t); clearInterval(interval); };
     }, []);
 
     // Git status for IDE tab

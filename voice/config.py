@@ -110,22 +110,23 @@ VOICE_CONFIG = {
     "barge_in": {
         # Suppress barge-in detection for this long after TTS starts.
         # Kokoro local TTS has near-zero synthesis latency, so the full phrase
-        # plays out quickly. 3000ms covers most ack phrases (~2-3s) and prevents
+        # plays out quickly. 4s covers most ack phrases and prevents
         # speaker echo from triggering false barge-in.
-        "grace_ms": 3000,
+        "grace_ms": 4000,
 
         # Continuous speech required before interrupt.
-        # 200ms avoids brief echo bursts from triggering barge-in.
-        "min_speech_ms": 200,
+        # 400ms rejects brief noise bursts / echo while still feeling responsive.
+        "min_speech_ms": 400,
 
         # Energy must be at least this multiple of ambient noise floor.
-        "energy_ratio": 3.0,
+        # 4.0x is strict enough to reject TV/music bleed and speaker echo.
+        "energy_ratio": 4.0,
 
         # Near-field gates (int16 RMS units).
-        # 1500 provides a harder gate against speaker echo from local TTS
+        # 2000 provides a hard gate against speaker echo from local TTS
         # (Kokoro outputs at 24kHz, louder than Azure cloud TTS).
-        "min_absolute_rms": 1500,
-        "min_rms_above_noise": 350,
+        "min_absolute_rms": 2000,
+        "min_rms_above_noise": 500,
     },
 
     # -----------------------------
