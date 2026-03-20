@@ -6,7 +6,57 @@ It is designed for people who want more than a chat window. You can explore file
 
 ## Demo
 
-- YouTube walkthrough: [Arcturus product demo](https://youtu.be/fSmfjSdout4)
+- YouTube walkthrough: [Arcturus product demo](https://youtu.be/PUfb0chxeQg)
+
+## Screenshots
+
+### Product Overview
+
+Arcturus ships as a unified workspace rather than a collection of disconnected tools. The About screen gives a quick map of the major product surfaces available inside the platform.
+
+![Arcturus overview](docs/About.png)
+
+### Echo
+
+Echo is the voice-native interface for Arcturus. It supports hands-free interaction for asking questions, navigating the product, triggering agent workflows, and dictating notes.
+
+![Echo voice assistant](docs/Echo.png)
+
+### Runs
+
+Runs shows the live structure of agent execution. You can inspect orchestration graphs, active tasks, intermediate outputs, and the data each step is producing.
+
+![Runs orchestration view](docs/Runs.png)
+
+### Forge
+
+Forge is the structured artifact studio. It can generate decks and documents from prompts, preserve outlines, and let you inspect and refine the generated output before export.
+
+![Forge artifact studio](docs/Forge.png)
+
+### Apps
+
+Apps turns Arcturus into an application builder, not just an assistant. The platform can generate and host internal dashboards, workflows, and interactive tools directly inside the product.
+
+![Apps builder output](docs/Apps.png)
+
+### IDE
+
+The IDE workspace combines a code editor, terminal, file navigation, and an IDE Agent that can inspect code, call tools, and help execute coding workflows end to end.
+
+![IDE agent workspace](docs/IDE.png)
+
+### Knowledge Graph
+
+The knowledge graph helps users explore relationships extracted from memory and content. It turns entity extraction into a navigable visual layer for discovery and analysis.
+
+![Knowledge graph explorer](docs/Graph.png)
+
+### Scheduler
+
+The scheduler automates recurring jobs and makes Arcturus useful beyond one-off chats. It supports repeatable agent tasks, result history, and operational visibility.
+
+![Scheduler jobs](docs/Scheduler.png)
 
 ## What Arcturus Does
 
