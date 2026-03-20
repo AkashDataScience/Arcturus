@@ -158,15 +158,16 @@ docker compose up -d mongodb qdrant
 ### 2. Frontend prerequisites
 
 ```bash
-cd /Users/rohanshravan/TSAI/Arcturus/platform-frontend
+cd platform-frontend
 npm ci
 ```
 
 ### 3. Run the desktop app
 
-From `/Users/rohanshravan/TSAI/Arcturus/platform-frontend`:
+From the repo root:
 
 ```bash
+cd platform-frontend
 npm run electron:dev:all
 ```
 
@@ -181,21 +182,20 @@ This launches:
 ### Backend only
 
 ```bash
-cd /Users/rohanshravan/TSAI/Arcturus
 uv run api.py
 ```
 
 ### Frontend only
 
 ```bash
-cd /Users/rohanshravan/TSAI/Arcturus/platform-frontend
+cd platform-frontend
 npm run dev
 ```
 
 ### Frontend + backend without Electron packaging flow
 
 ```bash
-cd /Users/rohanshravan/TSAI/Arcturus/platform-frontend
+cd platform-frontend
 npm run dev:all
 ```
 
@@ -235,36 +235,35 @@ npm run dev:all
 
 ## Repository Layout
 
-- `/Users/rohanshravan/TSAI/Arcturus/api.py` - backend app entrypoint
-- `/Users/rohanshravan/TSAI/Arcturus/platform-frontend/` - Electron + React desktop client
-- `/Users/rohanshravan/TSAI/Arcturus/core/` - orchestration, loops, schemas, services
-- `/Users/rohanshravan/TSAI/Arcturus/routers/` - API surfaces for product features
-- `/Users/rohanshravan/TSAI/Arcturus/memory/` - memory, sync, recall, and graph-related systems
-- `/Users/rohanshravan/TSAI/Arcturus/voice/` - wake, STT, TTS, and orchestration
-- `/Users/rohanshravan/TSAI/Arcturus/ops/` - health, diagnostics, tracing, throttling
-- `/Users/rohanshravan/TSAI/Arcturus/marketplace/` - Bazaar packaging and skill flows
-- `/Users/rohanshravan/TSAI/Arcturus/tests/` - unit, API, integration, acceptance, automation, and SDK tests
+- `api.py` - backend app entrypoint
+- `platform-frontend/` - Electron + React desktop client
+- `core/` - orchestration, loops, schemas, services
+- `routers/` - API surfaces for product features
+- `memory/` - memory, sync, recall, and graph-related systems
+- `voice/` - wake, STT, TTS, and orchestration
+- `ops/` - health, diagnostics, tracing, throttling
+- `marketplace/` - Bazaar packaging and skill flows
+- `tests/` - unit, API, integration, acceptance, automation, and SDK tests
 
 ## Testing
 
 Quick project check:
 
 ```bash
-cd /Users/rohanshravan/TSAI/Arcturus
 scripts/test_all.sh quick
 ```
 
 Frontend tests:
 
 ```bash
-cd /Users/rohanshravan/TSAI/Arcturus/platform-frontend
+cd platform-frontend
 npm test
 ```
 
 ## Configuration
 
-- runtime settings live in `/Users/rohanshravan/TSAI/Arcturus/config/settings.json`
-- defaults live in `/Users/rohanshravan/TSAI/Arcturus/config/settings.defaults.json`
+- runtime settings live in `config/settings.json`
+- defaults live in `config/settings.defaults.json`
 - secrets should stay in local environment variables or `.env`, not in Git
 
 ## Security Notes
